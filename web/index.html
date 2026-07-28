@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Homelab SOC · SIEM Dashboard</title>
+
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Font Awesome 6 (Free) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <!-- D3.js -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <div class="app">
+
+        <!-- ====== NAVBAR ====== -->
+        <nav class="navbar">
+            <div class="navbar-left">
+                <div class="logo-icon">
+                    <i class="fas fa-shield-halved"></i>
+                </div>
+                <div>
+                    <div class="brand">Homelab<span>SOC</span></div>
+                    <div class="brand-sub"><span class="status-led"></span> SIEM · v1.0</div>
+                </div>
+            </div>
+
+            <div class="navbar-center">
+                <i class="fas fa-search"></i>
+                <input type="text" placeholder="Search events, IPs, alerts..." />
+                <i class="fas fa-sliders-h" style="color:var(--text-muted); font-size:13px; cursor:pointer;"></i>
+            </div>
+
+            <div class="navbar-right">
+                <!-- Theme Controls -->
+                <div class="theme-controls">
+                    <button class="theme-btn" id="themeToggle" title="Toggle dark/light theme">
+                        <i class="fas fa-moon"></i> <span id="themeLabel">Dark</span>
+                    </button>
+                    <button class="theme-btn" id="uploadThemeBtn" title="Upload custom JSON theme">
+                        <i class="fas fa-upload"></i>
+                    </button>
+                    <input type="file" id="customThemeInput" accept=".json" />
+                </div>
+
+                <span class="badge-icon">
+                    <i class="fas fa-bell"></i>
+                    <span class="dot">3</span>
+                </span>
+                <span class="badge-icon">
+                    <i class="fas fa-code-branch"></i>
+                </span>
+                <span class="badge-icon">
+                    <i class="fas fa-cloud"></i>
+                </span>
+                <div class="user-avatar">JD</div>
+            </div>
+        </nav>
+
+        <!-- ====== STATS ROW ====== -->
+        <section class="stats-row">
+            <div class="stat-card">
+                <div class="stat-icon red"><i class="fas fa-exclamation-triangle"></i></div>
+                <div class="stat-info">
+                    <div class="label">Total Alerts</div>
+                    <div class="value">47</div>
+                    <div class="change danger"><i class="fas fa-arrow-up"></i> +12%</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon blue"><i class="fas fa-server"></i></div>
+                <div class="stat-info">
+                    <div class="label">Active Services</div>
+                    <div class="value">8</div>
+                    <div class="change"><i class="fas fa-check-circle"></i> All healthy</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green"><i class="fas fa-wave-square"></i></div>
+                <div class="stat-info">
+                    <div class="label">Events Today</div>
+                    <div class="value">1,284</div>
+                    <div class="change"><i class="fas fa-arrow-down"></i> -4%</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange"><i class="fas fa-globe"></i></div>
+                <div class="stat-info">
+                    <div class="label">Threat Level</div>
+                    <div class="value" style="color:var(--severity-high);">Medium</div>
+                    <div class="change">3 active threats</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon purple"><i class="fas fa-ban"></i></div>
+                <div class="stat-info">
+                    <div class="label">Blocked IPs</div>
+                    <div class="value">23</div>
+                    <div class="change">+2 this hour</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====== MAIN GRID ====== -->
+        <div class="main-grid">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><i class="fas fa-network-wired"></i> Network Topology</h3>
+                    <span class="badge"><i class="fas fa-circle" style="color:#66bb6a;font-size:8px;"></i> Live</span>
+                </div>
+                <div id="network-map">
+                    <div class="legend-mini">
+                        <span><span class="legend-dot green"></span> Internal</span>
+                        <span><span class="legend-dot blue"></span> Service</span>
+                        <span><span class="legend-dot red"></span> Threat</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><i class="fas fa-clock"></i> Alert Timeline</h3>
+                    <span class="badge">Last 24h</span>
+                </div>
+                <div class="timeline" id="timelineContainer">
+                    <!-- injected by JS -->
+                </div>
+            </div>
+        </div>
+
+         <!-- ====== CHARTS ROW ====== -->
+        <div class="charts-row">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><i class="fas fa-chart-pie"></i> Alert Severity</h3>
+                    <span class="badge">Distribution</span>
+                </div>
+                <div id="pieChart" class="chart-container"></div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><i class="fas fa-chart-bar"></i> Alerts by Service</h3>
+                    <span class="badge">Last 24h</span>
+                </div>
+                <div id="barChart" class="chart-container"></div>
+            </div>
+        </div>
+
+        <!-- ====== BOTTOM GRID ====== -->
+        <div class="bottom-grid">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><i class="fas fa-heartbeat"></i> Service Health</h3>
+                    <span class="badge">Auto-discovered</span>
+                </div>
+                <div class="service-grid" id="serviceGrid"></div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><i class="fas fa-list-ul"></i> Recent Alerts</h3>
+                    <span class="badge"><i class="fas fa-sync-alt fa-fw"></i> Live</span>
+                </div>
+                <div class="alert-table-wrap">
+                    <table class="alert-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Severity</th>
+                                <th>Event</th>
+                                <th>Source</th>
+                                <th>Intel</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alertTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer-note">
+            <i class="fas fa-shield-halved" style="margin-right:6px;"></i>
+            Homelab SOC · Single binary · Zero config · Built for homelab operators
+        </div>
+        </div>
+        
+    <script src="script.js"></script>
+</body>
+</html>
