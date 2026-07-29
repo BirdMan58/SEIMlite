@@ -546,10 +546,154 @@ function createBar() {
 drawBarChart = createBar;
 
 // ============================================================
-// 4.  THEME SYSTEM (unchanged)
+// 4.  THEME SYSTEM
 // ============================================================
 
-// ... (keep your existing theme code here) ...
+let currentTheme = 'dark'; // 'dark', 'light', 'custom'
+
+// Built-in light theme variables (override dark)
+const lightThemeVars = {
+    '--bg-primary': '#f4f6fa',
+    '--bg-secondary': '#ffffff',
+    '--bg-panel': '#ffffff',
+    '--bg-card': '#f0f2f5',
+    '--bg-input': '#eef0f3',
+    '--text-primary': '#1a2330',
+    '--text-secondary': '#4d5f72',
+    '--text-muted': '#6a7f94',
+    '--border-color': '#d0d8e0',
+    '--border-light': '#e0e4ea',
+    '--accent': '#0d6efd',
+    '--accent-hover': '#0b5ed7',
+    '--shadow': 'rgba(0,0,0,0.1)',
+    '--stat-icon-bg-blue': '#e6f0ff',
+    '--stat-icon-bg-red': '#ffe6e6',
+    '--stat-icon-bg-green': '#e6ffed',
+    '--stat-icon-bg-orange': '#fff0e6',
+    '--stat-icon-bg-purple': '#f0e6ff',
+    '--node-service-fill': '#e6f0ff',
+    '--node-service-stroke': '#0d6efd',
+    '--node-center-fill': '#cfe2ff',
+    '--node-center-stroke': '#0d6efd',
+    '--node-external-fill': '#eef0f3',
+    '--node-external-stroke': '#b0b8c0',
+    '--node-threat-fill': '#ffd6d6',
+    '--node-threat-stroke': '#dc3545',
+    '--link-color': '#b0b8c0',
+    '--link-active': '#0d6efd',
+    '--badge-bg': '#e9ecef',
+    '--severity-critical': '#dc3545',
+    '--severity-high': '#fd7e14',
+    '--severity-medium': '#ffc107',
+    '--severity-low': '#0dcaf0',
+    '--chart-text': '#1a2330',
+    '--chart-legend': '#4d5f72',
+    '--tooltip-bg': '#ffffff',
+    '--tooltip-border': '#ced4da',
+    '--footer-border': '#dee2e6',
+};
+
+function applyTheme(vars) {
+    const root = document.documentElement.style;
+    for (const [key, value] of Object.entries(vars)) {
+        root.setProperty(key, value);
+    }
+    // Redraw charts to pick up new colors
+    drawNetwork();
+    drawPieChart();
+    drawBarChart();
+}
+
+function setDarkTheme() {
+    // Remove any custom theme class and reset to default (dark)
+    document.body.classList.remove('light-theme');
+    // Revert to dark by removing inline styles? We'll just set the vars to empty? 
+    // Better: use the dark theme values from :root. We can remove inline overrides.
+    const root = document.documentElement.style;
+    // Remove all custom property overrides we might have set
+    // We'll just clear the inline style for each variable we might have set.
+    // Since we apply custom themes by setting inline styles, we can remove them.
+    // But we can't easily remove individual vars, so we'll just set them to '' (empty) which falls back to :root.
+    const vars = [
+        '--bg-primary', '--bg-secondary', '--bg-panel', '--bg-card', '--bg-input',
+        '--text-primary', '--text-secondary', '--text-muted', '--border-color', '--border-light',
+        '--accent', '--accent-hover', '--shadow', '--stat-icon-bg-blue', '--stat-icon-bg-red',
+        '--stat-icon-bg-green', '--stat-icon-bg-orange', '--stat-icon-bg-purple',
+        '--node-service-fill', '--node-service-stroke', '--node-center-fill', '--node-center-stroke',
+        '--node-external-fill', '--node-external-stroke', '--node-threat-fill', '--node-threat-stroke',
+        '--link-color', '--link-active', '--badge-bg', '--severity-critical', '--severity-high',
+        '--severity-medium', '--severity-low', '--chart-text', '--chart-legend',
+        '--tooltip-bg', '--tooltip-border', '--footer-border'
+    ];
+    for (const v of vars) {
+        root.setProperty(v, '');
+    }
+    document.body.classList.remove('light-theme');
+    currentTheme = 'dark';
+    document.getElementById('themeLabel').textContent = 'Dark';
+    document.querySelector('#themeToggle i').className = 'fas fa-moon';
+    // Redraw
+    drawNetwork();
+    drawPieChart();
+    drawBarChart();
+}
+
+function setLightTheme() {
+    document.body.classList.add('light-theme');
+    // Also apply the light theme vars (they are defined in CSS via .light-theme)
+    // But to ensure consistency, we also set them inline to override any custom.
+    applyTheme(lightThemeVars);
+    currentTheme = 'light';
+    document.getElementById('themeLabel').textContent = 'Light';
+    document.querySelector('#themeToggle i').className = 'fas fa-sun';
+    // Redraw already called in applyTheme
+}
+
+function setCustomTheme(jsonObj) {
+    // jsonObj should be an object with key-value pairs for CSS variables (with or without --)
+    const vars = {};
+    for (const [key, value] of Object.entries(jsonObj)) {
+        const cssKey = key.startsWith('--') ? key : '--' + key;
+        vars[cssKey] = value;
+    }
+    // Remove light-theme class if present
+    document.body.classList.remove('light-theme');
+    applyTheme(vars);
+    currentTheme = 'custom';
+    document.getElementById('themeLabel').textContent = 'Custom';
+    document.querySelector('#themeToggle i').className = 'fas fa-palette';
+}
+
+// ---- Toggle between dark/light ----
+document.getElementById('themeToggle').addEventListener('click', function() {
+    if (currentTheme === 'dark') {
+        setLightTheme();
+    } else {
+        setDarkTheme();
+    }
+});
+
+// ---- Upload custom theme ----
+document.getElementById('uploadThemeBtn').addEventListener('click', function() {
+    document.getElementById('customThemeInput').click();
+});
+
+document.getElementById('customThemeInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        try {
+            const json = JSON.parse(ev.target.result);
+            setCustomTheme(json);
+        } catch (err) {
+            alert('Invalid JSON file. Please upload a valid theme JSON.');
+        }
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be re-uploaded
+    this.value = '';
+});
 
 // ============================================================
 // 5.  RENDER ALL
