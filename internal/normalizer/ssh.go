@@ -88,12 +88,27 @@ type parsedFields struct {
 var (
 	failRe   = regexp.MustCompile(`Failed password for (?:invalid user )?(\S+) from (\S+) port (\d+)`)
 	acceptRe = regexp.MustCompile(`Accepted (?:password|publickey) for (\S+) from (\S+) port (\d+)`)
+
+	// Pattern: "password check failed for user (root)"
+	pamFailRe = regexp.MustCompile(`password check failed for user \((\S+)\)`)
+
+	// Pattern: "authentication failure; ... user=root ... rhost=192.168.122.1"
+	authFailRe = regexp.MustCompile(`authentication failure.*rhost=(\S+).*user=(\S+)`)
+
+	// Pattern: "Connection closed by authenticating user root 192.168.122.1 port 39398"
+	connClosedRe = regexp.MustCompile(`Connection closed by authenticating user (\S+) (\S+) port (\d+)`)
+
+	// Pattern: "Disconnected from authenticating user root 192.168.122.1 port 39390"
+	disconnectedRe = regexp.MustCompile(`Disconnected from authenticating user (\S+) (\S+) port (\d+)`)
 )
 
 func (n SSHNormalizer) parseSSHLog(line string) (eventType string, fields parsedFields, ok bool) {
+	// Quick filter for SSH-related lines
 	if !strings.Contains(line, "sshd") && !strings.Contains(line, "ssh") {
 		return "", parsedFields{}, false
 	}
+
+	// 1. Try the standard Failed password pattern
 	if matches := failRe.FindStringSubmatch(line); matches != nil {
 		return "authentication_failed", parsedFields{
 			dstUser: matches[1],
@@ -101,6 +116,54 @@ func (n SSHNormalizer) parseSSHLog(line string) (eventType string, fields parsed
 			srcPort: matches[3],
 		}, true
 	}
+
+	// 2. Try PAM password check failed pattern
+	if matches := pamFailRe.FindStringSubmatch(line); matches != nil {
+		// Extract IP from the line using a separate regex
+		ipRe := regexp.MustCompile(`rhost=(\S+)`)
+		ipMatches := ipRe.FindStringSubmatch(line)
+		ip := "unknown"
+		if len(ipMatches) > 1 {
+			ip = ipMatches[1]
+		}
+		return "authentication_failed", parsedFields{
+			dstUser: matches[1],
+			srcIP:   ip,
+			srcPort: "unknown",
+		}, true
+	}
+
+	// 3. Try authentication failure pattern
+	if matches := authFailRe.FindStringSubmatch(line); matches != nil {
+		// matches[1] = rhost (IP), matches[2] = user
+		return "authentication_failed", parsedFields{
+			dstUser: matches[2],
+			srcIP:   matches[1],
+			srcPort: "unknown",
+		}, true
+	}
+
+	// 4. Try Connection closed pattern
+	if matches := connClosedRe.FindStringSubmatch(line); matches != nil {
+		// matches[1] = user, matches[2] = ip, matches[3] = port
+		return "authentication_failed", parsedFields{
+			dstUser: matches[1],
+			srcIP:   matches[2],
+			srcPort: matches[3],
+		}, true
+	}
+
+	// 5. Try Disconnected pattern
+	if matches := disconnectedRe.FindStringSubmatch(line); matches != nil {
+		// matches[1] = user, matches[2] = ip, matches[3] = port
+		return "authentication_failed", parsedFields{
+			dstUser: matches[1],
+			srcIP:   matches[2],
+			srcPort: matches[3],
+		}, true
+	}
+
+	// 6. Try Accepted (success) patterns
 	if matches := acceptRe.FindStringSubmatch(line); matches != nil {
 		return "authentication_success", parsedFields{
 			dstUser: matches[1],
@@ -108,6 +171,7 @@ func (n SSHNormalizer) parseSSHLog(line string) (eventType string, fields parsed
 			srcPort: matches[3],
 		}, true
 	}
+
 	return "", parsedFields{}, false
 }
 
