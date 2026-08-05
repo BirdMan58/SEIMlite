@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"time"
 
 	"SEIMlite/internal/api"
@@ -11,6 +12,7 @@ import (
 	"SEIMlite/internal/discovery"
 	"SEIMlite/internal/models"
 	"SEIMlite/internal/normalizer"
+	"SEIMlite/internal/storage"
 )
 
 func main() {
@@ -20,6 +22,27 @@ func main() {
 
 	fmt.Println("[  STARTED ] SEIMlite initializing...")
 
+	// Initialize SQLite database
+	dbPath := "./seimlite.db"
+	if err := storage.InitDB(dbPath); err != nil {
+		fmt.Printf("Failed to initialize database: %v\n", err)
+		os.Exit(1)
+	}
+	defer storage.CloseDB()
+
+	// Optionally, create a test alert for demonstration
+	testAlert := &models.CorrelationAlert{
+		Timestamp:   time.Now().Unix(),
+		Title:       "Test Alert",
+		Description: "SEIMlite is online and database is working",
+		Severity:    2,
+		SourceIP:    "127.0.0.1",
+		RuleID:      "test",
+	}
+	if err := storage.InsertAlert(testAlert); err != nil {
+		fmt.Printf("Failed to insert test alert: %v\n", err)
+	}
+
 	// Create API server and hub
 	hub := api.NewHub()
 	server := api.NewServer(hub)
@@ -28,7 +51,8 @@ func main() {
 	eventChan := make(chan *models.NormalizedEvent, 1000)
 
 	// Correlation Engine (with notifier)
-	engine := correlator.NewEngine(eventChan, server)
+	eventStore := storage.NewEventStore(storage.GetDB())
+	engine := correlator.NewEngine(eventChan, server, eventStore)
 	engine.Register(service.SSHBruteforceRule{})    // Alerts on 5 failures
 	engine.Register(service.SSHSingleFailureRule{}) // Alerts on every single failure
 	go engine.Start()

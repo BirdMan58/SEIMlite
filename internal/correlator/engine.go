@@ -2,36 +2,44 @@ package correlator
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
+	"SEIMlite/internal/eventstore"
 	"SEIMlite/internal/models"
+	"SEIMlite/internal/storage"
 )
 
+// Add EventStore to the Engine struct
 type Engine struct {
-	rules    []Rule
-	contexts map[string]*RuleContext
-	mu       sync.Mutex
-	eventCh  <-chan *models.NormalizedEvent
-	notifier AlertNotifier
+	rules      []Rule
+	contexts   map[string]*RuleContext
+	mu         sync.Mutex
+	eventCh    <-chan *models.NormalizedEvent
+	notifier   AlertNotifier
+	eventStore eventstore.EventStore // new field
 }
 
-func NewEngine(eventCh <-chan *models.NormalizedEvent, notifier AlertNotifier) *Engine {
+// NewEngine now accepts an EventStore
+func NewEngine(eventCh <-chan *models.NormalizedEvent, notifier AlertNotifier, store eventstore.EventStore) *Engine {
 	return &Engine{
-		rules:    []Rule{},
-		contexts: make(map[string]*RuleContext),
-		eventCh:  eventCh,
-		notifier: notifier,
+		rules:      []Rule{},
+		contexts:   make(map[string]*RuleContext),
+		eventCh:    eventCh,
+		notifier:   notifier,
+		eventStore: store,
 	}
 }
 
-// Register adds a rule to the engine.
+// Register creates a rule context with the event store
 func (e *Engine) Register(rule Rule) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.rules = append(e.rules, rule)
 	e.contexts[rule.Name()] = &RuleContext{
 		Windows: make(map[string][]int64),
+		Store:   e.eventStore, // pass the store to the rule
 	}
 }
 
@@ -69,6 +77,10 @@ func (e *Engine) Start() {
 
 				// For actual use, replace the print above with:
 				// blocker.BlockIP(alert.SourceIP) // Calls iptables
+
+				if err := storage.InsertAlert(alert); err != nil {
+					fmt.Fprintf(os.Stderr, "Error inserting alert into DB: %v\n", err)
+				}
 
 				if e.notifier != nil {
 					e.notifier.NotifyAlert(alert)

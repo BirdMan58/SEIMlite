@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"SEIMlite/internal/models"
+	"SEIMlite/internal/storage"
 )
 
 // ============================================================
@@ -278,6 +279,11 @@ func (n SSHNormalizer) processLine(line string, out *os.File, hostname string, p
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating alert: %v\n", err)
 		return
+	}
+
+	// Insert into database
+	if err := storage.InsertEvent(alert); err != nil {
+		fmt.Fprintf(os.Stderr, "Error inserting event into DB: %v\n", err)
 	}
 
 	// Send to correlation engine

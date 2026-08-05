@@ -9,6 +9,7 @@ import (
 
 	"SEIMlite/internal/discovery"
 	"SEIMlite/internal/models"
+	"SEIMlite/internal/storage"
 	"SEIMlite/web"
 )
 
@@ -143,8 +144,13 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
+	alerts, err := storage.GetRecentAlerts(50)
+	if err != nil {
+		http.Error(w, "Failed to retrieve alerts", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.alerts)
+	json.NewEncoder(w).Encode(alerts)
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
