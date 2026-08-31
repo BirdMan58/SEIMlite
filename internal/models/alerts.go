@@ -26,10 +26,17 @@ type NormalizedEvent struct {
 		DstUser string `json:"dstuser"`
 
 		// ===== NEW FIELDS =====
-		Username      string `json:"username"`       // Extracted username (e.g., "root", "admin")
-		IsValidUser   bool   `json:"is_valid_user"`  // True if user exists in /etc/passwd
-		ClientVersion string `json:"client_version"` // Client fingerprint (e.g., "OpenSSH_8.9p1")
-		GeoCountry    string `json:"geo_country"`    // Default: "Local" for RFC1918
+		Username      string  `json:"username"`       // Extracted username (e.g., "root", "admin")
+		IsValidUser   bool    `json:"is_valid_user"`  // True if user exists in /etc/passwd
+		ClientVersion string  `json:"client_version"` // Client fingerprint (e.g., "OpenSSH_8.9p1")
+		GeoCountry    string  `json:"geo_country"`    // Default: "Local" for RFC1918
+		AuthMethod    string  `json:"auth_method"`    // "password", "publickey", "keyboard-interactive", "none"
+		IsRoot        bool    `json:"is_root"`        // True if user is root
+		SessionState  string  `json:"session_state"`  // "opened", "closed", "exec"
+		Command       string  `json:"command"`        // Executed command
+		PID           int     `json:"pid"`            // Associated process ID
+		RAMUsageMB    float64 `json:"ram_usage_mb"`   // Memory usage in MB
+		CPUPercent    float64 `json:"cpu_percent"`    // CPU usage percentage
 		// ============================================
 	} `json:"data"`
 	FullLog string `json:"full_log"`
@@ -69,6 +76,13 @@ func NewNormalizedEvent() *NormalizedEvent {
 	e.Data.IsValidUser = false
 	e.Data.ClientVersion = ""
 	e.Data.GeoCountry = "Local" // Default for RFC1918/internal IPs
+	e.Data.AuthMethod = "unknown"
+	e.Data.IsRoot = false
+	e.Data.SessionState = ""
+	e.Data.Command = ""
+	e.Data.PID = 0
+	e.Data.RAMUsageMB = 0
+	e.Data.CPUPercent = 0
 
 	// Initialize Decoder
 	e.Decoder.Name = ""

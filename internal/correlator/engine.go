@@ -72,7 +72,9 @@ func (e *Engine) Start() {
 				fmt.Printf("\n[!!! ALERT !!!] %s\n", alert.Title)
 				fmt.Printf("Description: %s\n", alert.Description)
 				fmt.Printf("Severity: %d/5\n", alert.Severity)
-				fmt.Printf("[ACTION] Blocking IP %s (SIMULATED - No actual firewall change)\n", alert.SourceIP)
+				if alert.SourceIP != "" && alert.SourceIP != "127.0.0.1" && alert.SourceIP != "localhost" && alert.SourceIP != "local" {
+					fmt.Printf("[ACTION] Blocking IP %s (SIMULATED - No actual firewall change)\n", alert.SourceIP)
+				}
 				fmt.Println("============================================")
 
 				// For actual use, replace the print above with:

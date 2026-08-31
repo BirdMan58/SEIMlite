@@ -761,3 +761,83 @@ document.addEventListener('DOMContentLoaded', function() {
         connectWebSocket();
     });
 });
+
+// ============================================================
+// 8. SSH SECURITY CONFIG MODAL HANDLERS
+// ============================================================
+
+async function openSSHConfigModal() {
+    const modal = document.getElementById('sshModal');
+    if (!modal) return;
+    try {
+        const res = await fetch('/api/config/ssh');
+        if (res.ok) {
+            const cfg = await res.json();
+            document.getElementById('cfgMaxRam').value = cfg.max_ram_mb || 256;
+            document.getElementById('cfgMaxCpu').value = cfg.max_cpu_percent || 80;
+            document.getElementById('cfgAllowChildProcess').checked = !!cfg.allow_child_process;
+            document.getElementById('cfgAllowChildShell').checked = !!cfg.allow_child_shell;
+            document.getElementById('cfgAutoKillViolators').checked = !!cfg.auto_kill_violators;
+            document.getElementById('cfgBlockedProcs').value = (cfg.blocked_child_processes || []).join(', ');
+            document.getElementById('cfgAllowedProcs').value = (cfg.allowed_child_processes || []).join(', ');
+            document.getElementById('cfgBruteThreshold').value = cfg.brute_force_threshold || 5;
+            document.getElementById('cfgUserEnumThreshold').value = cfg.user_enum_threshold || 3;
+            document.getElementById('cfgAlertRootLogin').checked = !!cfg.alert_on_root_login;
+            document.getElementById('cfgAlertBruteSuccess').checked = !!cfg.alert_on_bruteforce_success;
+            document.getElementById('cfgAlertInvalidUser').checked = !!cfg.alert_on_invalid_user;
+        }
+    } catch (e) {
+        console.error('Failed to fetch SSH config:', e);
+    }
+    modal.classList.add('open');
+}
+
+function closeSSHConfigModal() {
+    const modal = document.getElementById('sshModal');
+    if (modal) modal.classList.remove('open');
+}
+
+document.getElementById('sshConfigBtn')?.addEventListener('click', openSSHConfigModal);
+document.getElementById('closeSshModal')?.addEventListener('click', closeSSHConfigModal);
+document.getElementById('cancelSshModal')?.addEventListener('click', closeSSHConfigModal);
+
+document.getElementById('sshConfigForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const blockedStr = document.getElementById('cfgBlockedProcs').value;
+    const allowedStr = document.getElementById('cfgAllowedProcs').value;
+
+    const payload = {
+        max_ram_mb: parseFloat(document.getElementById('cfgMaxRam').value) || 256,
+        max_cpu_percent: parseFloat(document.getElementById('cfgMaxCpu').value) || 80,
+        allow_child_process: document.getElementById('cfgAllowChildProcess').checked,
+        allow_child_shell: document.getElementById('cfgAllowChildShell').checked,
+        auto_kill_violators: document.getElementById('cfgAutoKillViolators').checked,
+        blocked_child_processes: blockedStr.split(',').map(s => s.trim()).filter(Boolean),
+        allowed_child_processes: allowedStr.split(',').map(s => s.trim()).filter(Boolean),
+        brute_force_threshold: parseInt(document.getElementById('cfgBruteThreshold').value) || 5,
+        brute_force_window_seconds: 60,
+        user_enum_threshold: parseInt(document.getElementById('cfgUserEnumThreshold').value) || 3,
+        alert_on_root_login: document.getElementById('cfgAlertRootLogin').checked,
+        alert_on_bruteforce_success: document.getElementById('cfgAlertBruteSuccess').checked,
+        alert_on_invalid_user: document.getElementById('cfgAlertInvalidUser').checked,
+        session_monitoring: true,
+        process_monitor_interval_sec: 3
+    };
+
+    try {
+        const res = await fetch('/api/config/ssh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            alert('SSH Security Configuration saved successfully!');
+            closeSSHConfigModal();
+        } else {
+            alert('Failed to save configuration.');
+        }
+    } catch (err) {
+        console.error('Error saving SSH config:', err);
+        alert('Error saving SSH config: ' + err.message);
+    }
+});

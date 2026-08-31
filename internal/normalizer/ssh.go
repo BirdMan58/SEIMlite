@@ -96,15 +96,24 @@ type parsedFields struct {
 	srcPort       string
 	dstUser       string
 	clientVersion string
+	authMethod    string
+	sessionState  string
 }
 
 // Regex patterns for SSH log parsing
 var (
 	// Standard failed password (valid or invalid user)
-	failRe = regexp.MustCompile(`Failed password for (?:invalid user )?(\S+) from (\S+) port (\d+)`)
+	failRe = regexp.MustCompile(`Failed (password|publickey|keyboard-interactive) for (?:invalid user )?(\S+) from (\S+) port (\d+)`)
 
 	// Standard accepted password/publickey
-	acceptRe = regexp.MustCompile(`Accepted (?:password|publickey) for (\S+) from (\S+) port (\d+)`)
+	acceptRe = regexp.MustCompile(`Accepted (password|publickey|keyboard-interactive) for (\S+) from (\S+) port (\d+)`)
+
+	// Invalid user attempt regex
+	invalidUserRe = regexp.MustCompile(`Invalid user (\S+) from (\S+) port (\d+)`)
+
+	// PAM session opened / closed
+	sessionOpenedRe = regexp.MustCompile(`pam_unix\(sshd:session\): session opened for user (\S+)`)
+	sessionClosedRe = regexp.MustCompile(`pam_unix\(sshd:session\): session closed for user (\S+)`)
 
 	// PAM: "password check failed for user (root)"
 	pamFailRe = regexp.MustCompile(`password check failed for user \((\S+)\)`)
@@ -123,7 +132,7 @@ var (
 )
 
 // parseSSHLog extracts all fields from a single log line.
-// Returns: eventType ("login_failure" or "login_success"), fields, ok
+// Returns: eventType ("login_failure", "login_success", "invalid_user", "session_open", "session_close"), fields, ok
 func parseSSHLog(line string) (eventType string, fields parsedFields, ok bool) {
 	// Quick filter for SSH-related lines
 	if !strings.Contains(line, "sshd") && !strings.Contains(line, "ssh") {
@@ -136,12 +145,13 @@ func parseSSHLog(line string) (eventType string, fields parsedFields, ok bool) {
 		clientVersion = matches[1]
 	}
 
-	// 1. Standard Failed password
+	// 1. Standard Failed password / publickey
 	if matches := failRe.FindStringSubmatch(line); matches != nil {
 		return "login_failure", parsedFields{
-			dstUser:       matches[1],
-			srcIP:         matches[2],
-			srcPort:       matches[3],
+			authMethod:    matches[1],
+			dstUser:       matches[2],
+			srcIP:         matches[3],
+			srcPort:       matches[4],
 			clientVersion: clientVersion,
 		}, true
 	}
@@ -149,16 +159,47 @@ func parseSSHLog(line string) (eventType string, fields parsedFields, ok bool) {
 	// 2. Standard Accepted password/publickey (success)
 	if matches := acceptRe.FindStringSubmatch(line); matches != nil {
 		return "login_success", parsedFields{
-			dstUser:       matches[1],
-			srcIP:         matches[2],
-			srcPort:       matches[3],
+			authMethod:    matches[1],
+			dstUser:       matches[2],
+			srcIP:         matches[3],
+			srcPort:       matches[4],
 			clientVersion: clientVersion,
 		}, true
 	}
 
-	// 3. PAM password check failed
+	// 3. Invalid user attempt
+	if matches := invalidUserRe.FindStringSubmatch(line); matches != nil {
+		return "invalid_user", parsedFields{
+			dstUser:       matches[1],
+			srcIP:         matches[2],
+			srcPort:       matches[3],
+			clientVersion: clientVersion,
+			authMethod:    "unknown",
+		}, true
+	}
+
+	// 4. Session opened
+	if matches := sessionOpenedRe.FindStringSubmatch(line); matches != nil {
+		return "session_open", parsedFields{
+			dstUser:       matches[1],
+			srcIP:         "127.0.0.1",
+			sessionState:  "opened",
+			clientVersion: clientVersion,
+		}, true
+	}
+
+	// 5. Session closed
+	if matches := sessionClosedRe.FindStringSubmatch(line); matches != nil {
+		return "session_close", parsedFields{
+			dstUser:       matches[1],
+			srcIP:         "127.0.0.1",
+			sessionState:  "closed",
+			clientVersion: clientVersion,
+		}, true
+	}
+
+	// 6. PAM password check failed
 	if matches := pamFailRe.FindStringSubmatch(line); matches != nil {
-		// Extract IP from the line
 		ipRe := regexp.MustCompile(`rhost=(\S+)`)
 		ipMatches := ipRe.FindStringSubmatch(line)
 		ip := "unknown"
@@ -170,37 +211,40 @@ func parseSSHLog(line string) (eventType string, fields parsedFields, ok bool) {
 			srcIP:         ip,
 			srcPort:       "unknown",
 			clientVersion: clientVersion,
+			authMethod:    "password",
 		}, true
 	}
 
-	// 4. PAM authentication failure
+	// 7. PAM authentication failure
 	if matches := authFailRe.FindStringSubmatch(line); matches != nil {
-		// matches[1] = rhost (IP), matches[2] = user
 		return "login_failure", parsedFields{
 			dstUser:       matches[2],
 			srcIP:         matches[1],
 			srcPort:       "unknown",
 			clientVersion: clientVersion,
+			authMethod:    "pam",
 		}, true
 	}
 
-	// 5. Connection closed (hydra)
+	// 8. Connection closed (hydra)
 	if matches := connClosedRe.FindStringSubmatch(line); matches != nil {
 		return "login_failure", parsedFields{
 			dstUser:       matches[1],
 			srcIP:         matches[2],
 			srcPort:       matches[3],
 			clientVersion: clientVersion,
+			authMethod:    "unknown",
 		}, true
 	}
 
-	// 6. Disconnected (hydra)
+	// 9. Disconnected (hydra)
 	if matches := disconnectedRe.FindStringSubmatch(line); matches != nil {
 		return "login_failure", parsedFields{
 			dstUser:       matches[1],
 			srcIP:         matches[2],
 			srcPort:       matches[3],
 			clientVersion: clientVersion,
+			authMethod:    "unknown",
 		}, true
 	}
 
@@ -239,10 +283,13 @@ func (n SSHNormalizer) generateAlert(rawLog string, eventType string, fields par
 	// ===== NEW FIELDS =====
 	alert.Data.Username = fields.dstUser
 	alert.Data.ClientVersion = fields.clientVersion
-	// Check if the user exists in /etc/passwd (cached)
 	alert.Data.IsValidUser = isValidSystemUser(fields.dstUser)
-	// GeoCountry remains "Local" for now (will be populated later via IP lookup)
 	alert.Data.GeoCountry = "Local"
+	if fields.authMethod != "" {
+		alert.Data.AuthMethod = fields.authMethod
+	}
+	alert.Data.IsRoot = (fields.dstUser == "root")
+	alert.Data.SessionState = fields.sessionState
 	// ======================
 
 	// Rule based on event type
@@ -256,6 +303,21 @@ func (n SSHNormalizer) generateAlert(rawLog string, eventType string, fields par
 		alert.Rule.Description = "sshd: authentication success"
 		alert.Rule.ID = "5715"
 		alert.Rule.Groups = []string{"syslog", "sshd", "authentication_success"}
+	} else if eventType == "invalid_user" {
+		alert.Rule.Level = 6
+		alert.Rule.Description = "sshd: invalid user login attempt"
+		alert.Rule.ID = "5712"
+		alert.Rule.Groups = []string{"syslog", "sshd", "invalid_user"}
+	} else if eventType == "session_open" {
+		alert.Rule.Level = 3
+		alert.Rule.Description = "sshd: session opened"
+		alert.Rule.ID = "5716"
+		alert.Rule.Groups = []string{"syslog", "sshd", "session_open"}
+	} else if eventType == "session_close" {
+		alert.Rule.Level = 2
+		alert.Rule.Description = "sshd: session closed"
+		alert.Rule.ID = "5717"
+		alert.Rule.Groups = []string{"syslog", "sshd", "session_close"}
 	} else {
 		alert.Rule.Level = 0
 		alert.Rule.Description = "sshd: unknown event"

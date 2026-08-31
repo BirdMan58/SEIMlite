@@ -1,0 +1,37 @@
+{
+  "ssh": {
+    "max_ram_mb": 256,
+    "max_cpu_percent": 80,
+    "allow_child_process": true,
+    "allow_child_shell": true,
+    "allowed_child_processes": [
+      "bash",
+      "sh",
+      "sftp-server",
+      "scp",
+      "git-receive-pack",
+      "rsync"
+    ],
+    "blocked_child_processes": [
+      "nc",
+      "ncat",
+      "netcat",
+      "socat",
+      "python3",
+      "perl",
+      "curl",
+      "wget",
+      "chmod",
+      "chown"
+    ],
+    "auto_kill_violators": false,
+    "brute_force_threshold": 3,
+    "brute_force_window_seconds": 60,
+    "user_enum_threshold": 2,
+    "alert_on_root_login": true,
+    "alert_on_bruteforce_success": true,
+    "alert_on_invalid_user": true,
+    "session_monitoring": true,
+    "process_monitor_interval_sec": 3
+  }
+}

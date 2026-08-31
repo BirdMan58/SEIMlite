@@ -36,6 +36,9 @@
             <div class="navbar-right">
                 <!-- Theme Controls -->
                 <div class="theme-controls">
+                    <button class="theme-btn" id="sshConfigBtn" title="SSH Rules & Resource Settings">
+                        <i class="fas fa-terminal"></i> <span>SSH Config</span>
+                    </button>
                     <button class="theme-btn" id="themeToggle" title="Toggle dark/light theme">
                         <i class="fas fa-moon"></i> <span id="themeLabel">Dark</span>
                     </button>
@@ -182,10 +185,92 @@
 
         <div class="footer-note">
             <i class="fas fa-shield-halved" style="margin-right:6px;"></i>
-            Homelab SOC · Single binary · Zero config · Built for homelab operators
+            Homelab SOC · Single binary · SSH Security Policy Enforcer · Built for homelab operators
         </div>
         </div>
-        
+
+        <!-- ====== SSH CONFIG MODAL ====== -->
+        <div id="sshModal" class="modal-overlay">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3><i class="fas fa-sliders-h"></i> SSH Security & Enforcement Config</h3>
+                    <button class="modal-close" id="closeSshModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="sshConfigForm">
+                        <div class="form-section-title"><i class="fas fa-microchip"></i> Resource Usage Limits</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="cfgMaxRam">Max RAM Usage (MB)</label>
+                                <input type="number" id="cfgMaxRam" step="10" min="0" placeholder="e.g. 256" />
+                            </div>
+                            <div class="form-group">
+                                <label for="cfgMaxCpu">Max Processor Usage (%)</label>
+                                <input type="number" id="cfgMaxCpu" step="5" min="0" max="100" placeholder="e.g. 80" />
+                            </div>
+                        </div>
+
+                        <div class="form-section-title"><i class="fas fa-user-shield"></i> Execution Permissions</div>
+                        <div class="form-row checkboxes">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfgAllowChildProcess" />
+                                <span>Allow Child Processes</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfgAllowChildShell" />
+                                <span>Allow Child Shells (bash, sh, zsh)</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfgAutoKillViolators" />
+                                <span style="color:var(--severity-critical); font-weight:600;">Auto-Kill Violating Processes</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group" style="margin-top:12px;">
+                            <label for="cfgBlockedProcs">Blocked Child Commands (Comma Separated)</label>
+                            <input type="text" id="cfgBlockedProcs" placeholder="e.g. nc, netcat, socat, python3, wget" />
+                        </div>
+                        <div class="form-group">
+                            <label for="cfgAllowedProcs">Allowed Child Commands Whitelist (Comma Separated)</label>
+                            <input type="text" id="cfgAllowedProcs" placeholder="e.g. bash, sh, sftp-server, scp" />
+                        </div>
+
+                        <div class="form-section-title"><i class="fas fa-bell"></i> Detection Rules & Thresholds</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="cfgBruteThreshold">Brute Force Failure Threshold</label>
+                                <input type="number" id="cfgBruteThreshold" min="1" placeholder="5" />
+                            </div>
+                            <div class="form-group">
+                                <label for="cfgUserEnumThreshold">User Enumeration Threshold</label>
+                                <input type="number" id="cfgUserEnumThreshold" min="1" placeholder="3" />
+                            </div>
+                        </div>
+
+                        <div class="form-row checkboxes">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfgAlertRootLogin" />
+                                <span>Alert on Root Login</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfgAlertBruteSuccess" />
+                                <span>Alert on Successful Login After Brute Force</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfgAlertInvalidUser" />
+                                <span>Alert on Invalid System Users</span>
+                            </label>
+                        </div>
+
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" id="cancelSshModal">Cancel</button>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Configuration</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
     <script src="/static/script.js"></script>
 </body>
 </html>

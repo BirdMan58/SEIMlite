@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"SEIMlite/internal/api"
+	"SEIMlite/internal/collector"
+	"SEIMlite/internal/config"
 	"SEIMlite/internal/correlator"
 	"SEIMlite/internal/correlator/service"
 	"SEIMlite/internal/discovery"
@@ -18,9 +20,20 @@ import (
 func main() {
 	pretty := flag.Bool("pretty", false, "Pretty-print normalized JSON")
 	addr := flag.String("addr", ":9000", "Dashboard address")
+	configPath := flag.String("config", "configs/ssh-config.json", "Path to SSH security configuration file")
 	flag.Parse()
 
 	fmt.Println("[  STARTED ] SEIMlite initializing...")
+
+	// Load Configuration
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		fmt.Printf("[ WARN ] Failed to load config from %s: %v. Using defaults.\n", *configPath, err)
+		cfg = config.DefaultConfig()
+	} else {
+		fmt.Printf("[ CONFIG ] Loaded SSH config from %s (Max RAM: %.1f MB, Max CPU: %.1f%%, Child Shell Allowed: %v)\n",
+			config.ConfigPath, cfg.SSH.MaxRAMMB, cfg.SSH.MaxCPUPercent, cfg.SSH.AllowChildShell)
+	}
 
 	// Initialize SQLite database
 	dbPath := "./seimlite.db"
@@ -53,9 +66,19 @@ func main() {
 	// Correlation Engine (with notifier)
 	eventStore := storage.NewEventStore(storage.GetDB())
 	engine := correlator.NewEngine(eventChan, server, eventStore)
-	engine.Register(service.SSHBruteforceRule{})    // Alerts on 5 failures
-	engine.Register(service.SSHSingleFailureRule{}) // Alerts on every single failure
+	engine.Register(service.SSHBruteforceRule{})
+	engine.Register(service.SSHSingleFailureRule{})
+	engine.Register(service.SSHUserEnumerationRule{})
+	engine.Register(service.SSHRootLoginRule{})
+	engine.Register(service.SSHBruteForceSuccessRule{})
+	engine.Register(service.SSHInvalidUserRule{})
+	engine.Register(service.SSHResourceViolationRule{})
+	engine.Register(service.SSHUnauthorizedProcessRule{})
 	go engine.Start()
+
+	// Start SSH Process & Resource Enforcement Monitor
+	sshMonitor := collector.NewSSHMonitor(eventChan)
+	go sshMonitor.Start()
 
 	// Service Discovery and Normalizers
 	fmt.Println("[  STARTED ] Starting service enumeration...")

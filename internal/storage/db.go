@@ -27,6 +27,11 @@ func InitDB(dbPath string) error {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Enable WAL mode & busy timeout to prevent SQLITE_BUSY (database is locked) errors
+	_, _ = db.Exec("PRAGMA journal_mode = WAL;")
+	_, _ = db.Exec("PRAGMA busy_timeout = 5000;")
+	_, _ = db.Exec("PRAGMA synchronous = NORMAL;")
+
 	if err := createTables(); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
@@ -110,6 +115,21 @@ func InsertEvent(event *models.NormalizedEvent) error {
 	}
 	timestamp := t.Unix()
 
+	// Derive standardized event_type string
+	eventType := "unknown"
+	descLower := strings.ToLower(event.Rule.Description)
+	if strings.Contains(descLower, "authentication failure") || strings.Contains(descLower, "invalid user") || strings.Contains(descLower, "login_failure") {
+		eventType = "login_failure"
+	} else if strings.Contains(descLower, "authentication success") || strings.Contains(descLower, "login_success") {
+		eventType = "login_success"
+	} else if strings.Contains(descLower, "session open") {
+		eventType = "session_open"
+	} else if strings.Contains(descLower, "session close") {
+		eventType = "session_close"
+	} else if event.Rule.Description != "" {
+		eventType = event.Rule.Description
+	}
+
 	query := `
 	INSERT INTO events
 	(timestamp, source, event_type, src_ip, dst_user, severity, raw_data, full_log, location, decoder)
@@ -117,8 +137,8 @@ func InsertEvent(event *models.NormalizedEvent) error {
 	`
 	_, err = db.Exec(query,
 		timestamp,
-		event.Decoder.Name,     // source = decoder name
-		event.Rule.Description, // event_type (we can refine later)
+		event.Decoder.Name, // source = decoder name
+		eventType,          // normalized event_type
 		event.Data.SrcIP,
 		event.Data.DstUser,
 		event.Rule.Level,
@@ -216,7 +236,7 @@ func NewEventStore(db *sql.DB) *SQLiteEventStore {
 func (s *SQLiteEventStore) CountFailuresSince(ip string, duration time.Duration) (int, error) {
 	now := time.Now().Unix()
 	since := now - int64(duration.Seconds())
-	query := `SELECT COUNT(*) FROM events WHERE src_ip = ? AND event_type = 'login_failure' AND timestamp >= ?`
+	query := `SELECT COUNT(*) FROM events WHERE src_ip = ? AND (event_type = 'login_failure' OR event_type LIKE '%authentication failure%' OR event_type LIKE '%invalid user%') AND timestamp >= ?`
 	var count int
 	err := s.db.QueryRow(query, ip, since).Scan(&count)
 	return count, err
@@ -227,7 +247,7 @@ func (s *SQLiteEventStore) CountFailuresInWindow(ip string, window time.Duration
 	start := now - int64(window.Seconds())
 
 	var total int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM events WHERE src_ip = ? AND event_type = 'login_failure' AND timestamp >= ? AND timestamp <= ?`,
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM events WHERE src_ip = ? AND (event_type = 'login_failure' OR event_type LIKE '%authentication failure%' OR event_type LIKE '%invalid user%') AND timestamp >= ? AND timestamp <= ?`,
 		ip, start, now).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -240,7 +260,7 @@ func (s *SQLiteEventStore) CountFailuresInWindow(ip string, window time.Duration
 	rows, err := s.db.Query(`
 		SELECT COUNT(*)
 		FROM events
-		WHERE src_ip = ? AND event_type = 'login_failure' AND timestamp >= ? AND timestamp <= ?
+		WHERE src_ip = ? AND (event_type = 'login_failure' OR event_type LIKE '%authentication failure%' OR event_type LIKE '%invalid user%') AND timestamp >= ? AND timestamp <= ?
 		GROUP BY (timestamp / ?)`,
 		ip, start, now, subWindow)
 	if err != nil {
@@ -265,7 +285,7 @@ func (s *SQLiteEventStore) GetLastSuccessfulLogin(username string) (*models.Norm
 	query := `
 	SELECT timestamp, source, event_type, src_ip, dst_user, severity, full_log, location, decoder
 	FROM events
-	WHERE dst_user = ? AND event_type = 'login_success'
+	WHERE dst_user = ? AND (event_type = 'login_success' OR event_type LIKE '%authentication success%')
 	ORDER BY timestamp DESC
 	LIMIT 1
 	`

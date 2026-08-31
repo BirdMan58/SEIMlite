@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"SEIMlite/internal/config"
 	"SEIMlite/internal/discovery"
 	"SEIMlite/internal/models"
 	"SEIMlite/internal/storage"
@@ -111,6 +112,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/api/alerts", s.handleAlerts)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/topology", s.handleTopology)
+	mux.HandleFunc("/api/config/ssh", s.handleSSHConfig)
 
 	// WebSocket
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -240,4 +242,38 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) NotifyAlert(alert *models.CorrelationAlert) {
 	s.AddAlert(alert)
+}
+
+func (s *Server) handleSSHConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodGet {
+		cfg := config.GetConfig().SSH
+		json.NewEncoder(w).Encode(cfg)
+		return
+	}
+
+	if r.Method == http.MethodPost || r.Method == http.MethodPut {
+		var newSSHCfg config.SSHConfig
+		if err := json.NewDecoder(r.Body).Decode(&newSSHCfg); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request payload: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		fullCfg := config.GetConfig()
+		fullCfg.SSH = newSSHCfg
+
+		if err := config.SaveConfig("", fullCfg); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "success",
+			"message": "SSH configuration updated",
+			"config":  newSSHCfg,
+		})
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
