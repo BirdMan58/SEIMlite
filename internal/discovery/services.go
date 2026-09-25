@@ -1,7 +1,10 @@
 package discovery
 
 import (
+	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,16 +16,17 @@ import (
 type Service struct {
 	Name          string
 	DefaultPort   int
+	Ports         []int
 	ProcessNames  []string
 	SearchCmdline bool
 }
 
 var KnownServices = []Service{
-	{Name: "ssh", DefaultPort: 22, ProcessNames: []string{"sshd"}, SearchCmdline: false},
-	{Name: "jellyfin", DefaultPort: 8096, ProcessNames: []string{"jellyfin"}, SearchCmdline: true},
-	{Name: "nextcloud", DefaultPort: 8080, ProcessNames: []string{"nextcloud"}, SearchCmdline: true},
-	{Name: "vaultwarden", DefaultPort: 8000, ProcessNames: []string{"vaultwarden"}, SearchCmdline: true},
-	{Name: "pihole", DefaultPort: 53, ProcessNames: []string{"pihole-FTL", "pihole"}, SearchCmdline: false},
+	{Name: "ssh", DefaultPort: 22, Ports: []int{22}, ProcessNames: []string{"sshd"}, SearchCmdline: false},
+	{Name: "jellyfin", DefaultPort: 8096, Ports: []int{8096, 8920}, ProcessNames: []string{"jellyfin"}, SearchCmdline: true},
+	{Name: "nextcloud", DefaultPort: 8080, Ports: []int{8080, 80, 443}, ProcessNames: []string{"nextcloud"}, SearchCmdline: true},
+	{Name: "vaultwarden", DefaultPort: 8000, Ports: []int{8000, 80, 443}, ProcessNames: []string{"vaultwarden"}, SearchCmdline: true},
+	{Name: "pihole", DefaultPort: 53, Ports: []int{53}, ProcessNames: []string{"pihole-FTL", "pihole"}, SearchCmdline: false},
 }
 
 func getCmdline(pid int) string {
@@ -42,12 +46,70 @@ func getComm(pid int) string {
 	return strings.TrimSpace(string(data))
 }
 
+func candidatePorts(svc Service) []int {
+	seen := map[int]bool{}
+	ports := make([]int, 0, len(svc.Ports)+1)
+	for _, port := range append([]int{svc.DefaultPort}, svc.Ports...) {
+		if port <= 0 || seen[port] {
+			continue
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
+	return ports
+}
+
+func httpServiceMatches(name, body string, headers http.Header) bool {
+	lower := strings.ToLower(body)
+	switch name {
+	case "nextcloud":
+		return strings.Contains(lower, "nextcloud") || strings.Contains(lower, "oc_login_name") || strings.Contains(lower, "login") && strings.Contains(lower, "nextcloud")
+	case "vaultwarden":
+		return strings.Contains(lower, "vaultwarden") || strings.Contains(lower, "bitwarden")
+	case "jellyfin":
+		return strings.Contains(lower, "jellyfin") || strings.Contains(lower, "emby") || strings.Contains(lower, "server dashboard")
+	case "pihole":
+		return strings.Contains(lower, "pihole") || strings.Contains(lower, "pi-hole") || strings.Contains(lower, "blocklists")
+	default:
+		return false
+	}
+}
+
+func detectHTTPService(name string, ports []int) bool {
+	for _, port := range ports {
+		if !isTCPPortOpen(port) {
+			continue
+		}
+		url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+		client := &http.Client{Timeout: 800 * time.Millisecond}
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			continue
+		}
+		if httpServiceMatches(name, string(bodyBytes), resp.Header) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsServiceRunning checks if a given service is currently running.
 func IsServiceRunning(svc Service) bool {
-	// Nextcloud commonly runs behind a web server or in a container, so its
-	// process name may not contain "nextcloud". Check its local TCP port first.
-	if svc.Name == "nextcloud" && isTCPPortOpen(svc.DefaultPort) {
-		return true
+	ports := candidatePorts(svc)
+	if svc.Name == "nextcloud" || svc.Name == "vaultwarden" || svc.Name == "jellyfin" || svc.Name == "pihole" {
+		if detectHTTPService(svc.Name, ports) {
+			return true
+		}
+	}
+	for _, port := range ports {
+		if isTCPPortOpen(port) {
+			return true
+		}
 	}
 
 	entries, err := os.ReadDir("/proc")

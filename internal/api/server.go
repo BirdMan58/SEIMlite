@@ -150,11 +150,22 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.alerts)
 }
 
-func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	// Compute stats from alerts
+func (s *Server) computeStats() map[string]interface{} {
 	total := len(s.alerts)
+	activeServices := 0
+	activeThreats := 0
 	severityCount := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+	for _, svc := range s.services {
+		if discovery.IsServiceRunning(svc) {
+			activeServices++
+		}
+	}
+
 	for _, a := range s.alerts {
+		if a == nil {
+			continue
+		}
 		sev := "low"
 		if a.Severity >= 4 {
 			sev = "critical"
@@ -164,39 +175,81 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			sev = "medium"
 		}
 		severityCount[sev]++
+		if a.Severity >= 2 {
+			activeThreats++
+		}
 	}
-	stats := map[string]interface{}{
-		"total_alerts":    total,
-		"active_services": len(s.services),
-		"events_today":    0, // not implemented yet
-		"threat_level":    "Medium",
-		"blocked_ips":     0,
-		"severity_dist":   severityCount,
+
+	threatLevel := "Low"
+	switch {
+	case severityCount["critical"] > 0:
+		threatLevel = "Critical"
+	case severityCount["high"] > 0:
+		threatLevel = "High"
+	case severityCount["medium"] > 0:
+		threatLevel = "Medium"
 	}
+
+	return map[string]interface{}{
+		"total_alerts":     total,
+		"active_services":  activeServices,
+		"active_threats":   activeThreats,
+		"events_today":     0,
+		"threat_level":     threatLevel,
+		"blocked_ips":      0,
+		"severity_dist":    severityCount,
+		"security_summary": map[string]interface{}{
+			"active_threats": activeThreats,
+			"status":         map[bool]string{true: "warning", false: "healthy"}[activeThreats > 0],
+		},
+	}
+}
+
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	stats := s.computeStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
 }
 
+func hasThreatAlert(alerts []*models.CorrelationAlert) bool {
+	for _, alert := range alerts {
+		if alert != nil && alert.Severity >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
-	// Generate network topology: center node + service nodes + external threat nodes
-	// For now, we can create a static topology based on known services and a few external IPs from alerts
 	nodes := []map[string]interface{}{
 		{"id": "homelab", "label": "🏠 Homelab", "type": "center"},
 	}
+	links := []map[string]interface{}{}
+
 	for _, svc := range s.services {
-		if svc.Name == "ssh" { // only include running services - for demo we include all
-			nodes = append(nodes, map[string]interface{}{
-				"id":    svc.Name,
-				"label": svc.Name,
-				"type":  "service",
-				"port":  svc.DefaultPort,
-			})
+		running := discovery.IsServiceRunning(svc)
+		if !running {
+			continue
 		}
+
+		serviceNode := map[string]interface{}{
+			"id":     svc.Name,
+			"label":  svc.Name,
+			"type":   "service",
+			"port":   svc.DefaultPort,
+			"threat": false,
+		}
+		nodes = append(nodes, serviceNode)
+		links = append(links, map[string]interface{}{
+			"source": "homelab",
+			"target": svc.Name,
+			"active": true,
+		})
 	}
-	// Add external nodes from alerts
+
 	extIPs := map[string]bool{}
 	for _, a := range s.alerts {
-		if a.SourceIP != "" {
+		if a != nil && a.SourceIP != "" && a.Severity >= 2 {
 			extIPs[a.SourceIP] = true
 		}
 	}
@@ -207,26 +260,13 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 			"type":   "external",
 			"threat": true,
 		})
-	}
-	// Links: center to services, services to external
-	links := []map[string]interface{}{}
-	for _, svc := range s.services {
-		if svc.Name == "ssh" {
-			links = append(links, map[string]interface{}{
-				"source": "homelab",
-				"target": svc.Name,
-				"active": true,
-			})
-		}
-	}
-	for ip := range extIPs {
-		// link to random service
 		links = append(links, map[string]interface{}{
-			"source": "ssh", // simplistic
+			"source": "homelab",
 			"target": ip,
 			"active": true,
 		})
 	}
+
 	topology := map[string]interface{}{
 		"nodes": nodes,
 		"links": links,

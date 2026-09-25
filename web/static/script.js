@@ -11,8 +11,8 @@ let networkData = { nodes: [], links: [] };
 // 1.  FETCH REAL DATA FROM BACKEND
 // ============================================================
 
-async function fetchInitialData() {
-    console.log('[FETCH] Fetching initial data...');
+async function refreshDashboardSnapshot() {
+    console.log('[FETCH] Refreshing dashboard snapshot...');
     try {
         const [servicesRes, alertsRes, topologyRes, statsRes] = await Promise.all([
             fetch('/api/services'),
@@ -20,11 +20,9 @@ async function fetchInitialData() {
             fetch('/api/topology'),
             fetch('/api/stats')
         ]);
+
         services = await servicesRes.json();
         const alerts = await alertsRes.json();
-        console.log('[FETCH] Alerts received:', alerts);
-        
-        // Map alerts to timeline format
         timelineAlerts = alerts.map(a => ({
             time: new Date(a.timestamp * 1000).toTimeString().slice(0, 8),
             severity: a.severity >= 4 ? 'critical' : a.severity >= 3 ? 'high' : a.severity >= 2 ? 'medium' : 'low',
@@ -40,18 +38,17 @@ async function fetchInitialData() {
             source: a.source_ip,
             intel: `${a.severity}/5 severity`
         }));
-        console.log('[FETCH] Mapped timelineAlerts:', timelineAlerts);
-        console.log('[FETCH] Mapped recentAlerts:', recentAlerts);
-
         networkData = await topologyRes.json();
         const stats = await statsRes.json();
         updateStats(stats);
-        console.log('[FETCH] Data loaded successfully.');
+        renderAll();
     } catch (e) {
-        console.error('[FETCH] Error fetching data:', e);
-        // Fallback: keep empty arrays
+        console.error('[FETCH] Error refreshing dashboard snapshot:', e);
     }
-    renderAll();
+}
+
+async function fetchInitialData() {
+    await refreshDashboardSnapshot();
 }
 
 function updateStats(stats) {
@@ -61,6 +58,13 @@ function updateStats(stats) {
         statCards[1].textContent = stats.active_services || 0;
         statCards[3].textContent = stats.threat_level || 'Unknown';
         statCards[4].textContent = stats.blocked_ips || 0;
+    }
+
+    const threatSummary = document.querySelectorAll('.stat-card .change');
+    if (threatSummary.length >= 4) {
+        const activeThreats = stats.active_threats || 0;
+        const threatLabel = activeThreats === 1 ? '1 active threat' : `${activeThreats} active threats`;
+        threatSummary[3].textContent = threatLabel;
     }
 }
 
@@ -225,15 +229,15 @@ function createNetwork() {
         );
 
     const nodeFill = (d) => {
+        if (d.threat) return 'var(--node-threat-fill)';
         if (d.type === 'center') return 'var(--node-center-fill)';
         if (d.type === 'service') return 'var(--node-service-fill)';
-        if (d.threat) return 'var(--node-threat-fill)';
         return 'var(--node-external-fill)';
     };
     const nodeStroke = (d) => {
+        if (d.threat) return 'var(--node-threat-stroke)';
         if (d.type === 'center') return 'var(--node-center-stroke)';
         if (d.type === 'service') return 'var(--node-service-stroke)';
-        if (d.threat) return 'var(--node-threat-stroke)';
         return 'var(--node-external-stroke)';
     };
 
@@ -461,24 +465,24 @@ function createBar() {
     const innerWidth = width - margin.left - margin.right;
     const innerHeight = height - margin.top - margin.bottom;
 
-    // Count alerts per service from timelineAlerts (or we can use services data)
     const alertCounts = {};
     timelineAlerts.forEach(a => {
-        // We don't have service info in alert, so we'll just count total
-        // Alternative: count by source IP or title keyword
-        // For simplicity, we'll use the services array to create a dummy distribution
-        // But better: use the actual alert data to count per service
+        const title = (a.title || '').toLowerCase();
+        let service = 'unknown';
+
+        if (title.includes('ssh')) service = 'ssh';
+        else if (title.includes('nextcloud')) service = 'nextcloud';
+        else if (title.includes('vaultwarden')) service = 'vaultwarden';
+        else if (title.includes('jellyfin')) service = 'jellyfin';
+        else if (title.includes('pihole')) service = 'pihole';
+
+        if (!alertCounts[service]) alertCounts[service] = 0;
+        alertCounts[service]++;
     });
-    // Fallback: create a bar chart from severity distribution? 
-    // We'll use severity counts instead.
-    const severityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
-    timelineAlerts.forEach(a => {
-        if (severityCounts.hasOwnProperty(a.severity)) severityCounts[a.severity]++;
-    });
-    const data = Object.keys(severityCounts).map(key => ({
-        label: key,
-        alerts: severityCounts[key]
-    })).filter(d => d.alerts > 0);
+
+    const data = Object.keys(alertCounts)
+        .map(key => ({ label: key, alerts: alertCounts[key] }))
+        .filter(d => d.alerts > 0);
 
     if (data.length === 0) {
         d3.select('#barChart').append('div')
@@ -717,34 +721,7 @@ function connectWebSocket() {
     ws.onmessage = function(event) {
         const data = JSON.parse(event.data);
         if (data.type === 'new_alert') {
-            const alert = data.alert;
-            const newEntry = {
-                time: new Date(alert.timestamp * 1000).toTimeString().slice(0, 8),
-                severity: alert.severity >= 4 ? 'critical' : alert.severity >= 3 ? 'high' : alert.severity >= 2 ? 'medium' : 'low',
-                title: alert.title,
-                desc: alert.description,
-                meta: `Source IP: ${alert.source_ip}`,
-                action: 'Block'
-            };
-            timelineAlerts.unshift(newEntry);
-            recentAlerts.unshift({
-                time: newEntry.time,
-                severity: newEntry.severity,
-                event: newEntry.title,
-                source: alert.source_ip,
-                intel: `${alert.severity}/5`
-            });
-            // Limit lists
-            if (timelineAlerts.length > 20) timelineAlerts.pop();
-            if (recentAlerts.length > 10) recentAlerts.pop();
-            // Re-render affected parts
-            renderTimeline();
-            renderRecentAlerts();
-            drawPieChart();
-            drawBarChart();
-            // Update stats
-            const totalEl = document.querySelector('.stat-card:nth-child(1) .value');
-            if (totalEl) totalEl.textContent = parseInt(totalEl.textContent) + 1;
+            refreshDashboardSnapshot();
         }
     };
     ws.onerror = function(e) { console.error('WebSocket error:', e); };
