@@ -54,6 +54,8 @@ func main() {
 						fmt.Printf("Error in %s normalizer: %v\n", name, err)
 					}
 				}()
+			} else if name == "nextcloud" {
+				fmt.Printf("→ Nextcloud detected on port %d (normalizer not implemented)\n", discovery.ServicePort(name))
 			} else {
 				fmt.Printf("→ (Normalizer for %s not yet implemented)\n", name)
 			}

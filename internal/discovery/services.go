@@ -1,10 +1,12 @@
 package discovery
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Service describes a detectable service.
@@ -18,7 +20,7 @@ type Service struct {
 var KnownServices = []Service{
 	{Name: "ssh", DefaultPort: 22, ProcessNames: []string{"sshd"}, SearchCmdline: false},
 	{Name: "jellyfin", DefaultPort: 8096, ProcessNames: []string{"jellyfin"}, SearchCmdline: true},
-	{Name: "nextcloud", DefaultPort: 80, ProcessNames: []string{"nextcloud"}, SearchCmdline: true},
+	{Name: "nextcloud", DefaultPort: 8080, ProcessNames: []string{"nextcloud"}, SearchCmdline: true},
 	{Name: "vaultwarden", DefaultPort: 8000, ProcessNames: []string{"vaultwarden"}, SearchCmdline: true},
 	{Name: "pihole", DefaultPort: 53, ProcessNames: []string{"pihole-FTL", "pihole"}, SearchCmdline: false},
 }
@@ -42,6 +44,12 @@ func getComm(pid int) string {
 
 // IsServiceRunning checks if a given service is currently running.
 func IsServiceRunning(svc Service) bool {
+	// Nextcloud commonly runs behind a web server or in a container, so its
+	// process name may not contain "nextcloud". Check its local TCP port first.
+	if svc.Name == "nextcloud" && isTCPPortOpen(svc.DefaultPort) {
+		return true
+	}
+
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return false
@@ -75,4 +83,27 @@ func Discover() map[string]bool {
 		result[svc.Name] = IsServiceRunning(svc)
 	}
 	return result
+}
+
+// isTCPPortOpen checks if a TCP port is open on localhost.
+func isTCPPortOpen(port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// ServicePort returns the configured default port for a known service.
+func ServicePort(name string) int {
+	for _, svc := range KnownServices {
+		if svc.Name == name {
+			return svc.DefaultPort
+		}
+	}
+	return 0
 }

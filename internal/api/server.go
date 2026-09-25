@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"SEIMlite/internal/discovery"
 	"SEIMlite/internal/models"
@@ -110,6 +112,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/api/alerts", s.handleAlerts)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/topology", s.handleTopology)
+	mux.HandleFunc("/api/nextcloud/security", s.handleNextcloudSecurity)
 
 	// WebSocket
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +233,25 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(topology)
+}
+
+func (s *Server) handleNextcloudSecurity(w http.ResponseWriter, r *http.Request) {
+	baseURL := os.Getenv("NEXTCLOUD_URL")
+	if baseURL == "" {
+		http.Error(w, "NEXTCLOUD_URL is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	findings, err := discovery.AuditNextcloud(r.Context(), baseURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"checked_at": time.Now().UTC(),
+		"findings":   findings,
+	})
 }
 
 func (s *Server) NotifyAlert(alert *models.CorrelationAlert) {
