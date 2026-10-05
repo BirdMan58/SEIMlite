@@ -27,6 +27,35 @@ type nextcloudStatus struct {
 	Version     string `json:"versionstring"`
 }
 
+type BulkUploadAssessment struct {
+	Blocked bool
+	Reason  string
+	Findings []NextcloudFinding
+}
+
+func AssessBulkUpload(fileCount int, totalBytes int64) BulkUploadAssessment {
+	findings := make([]NextcloudFinding, 0, 2)
+	thresholdFiles := 20
+	thresholdBytes := int64(80 * 1024 * 1024)
+
+	if fileCount >= thresholdFiles || totalBytes >= thresholdBytes {
+		findings = append(findings, NextcloudFinding{
+			ID:          "nextcloud-bulk-upload-dos",
+			Severity:    "critical",
+			Title:       "Suspicious bulk upload burst detected",
+			Details:     fmt.Sprintf("Detected %d files totaling %d bytes in a short burst, which can exhaust storage or trigger a denial-of-service condition.", fileCount, totalBytes),
+			Remediation: "Block the upload session, rate-limit uploads, and verify whether the user or script is behaving normally before allowing more file transfers.",
+		})
+		return BulkUploadAssessment{
+			Blocked:  true,
+			Reason:   "bulk_upload_burst",
+			Findings: findings,
+		}
+	}
+
+	return BulkUploadAssessment{Blocked: false, Reason: "normal", Findings: findings}
+}
+
 // AuditNextcloud checks a configured Nextcloud URL and its public status
 // endpoint. The URL should come from trusted local configuration, not a
 // request parameter, to avoid turning this endpoint into an SSRF primitive.

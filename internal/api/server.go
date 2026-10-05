@@ -287,10 +287,18 @@ func (s *Server) handleNextcloudSecurity(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	bulkUpload := discovery.AssessBulkUpload(35, 120*1024*1024)
+	if bulkUpload.Blocked {
+		findings = append(findings, bulkUpload.Findings...)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"checked_at": time.Now().UTC(),
 		"findings":   findings,
+		"blocked":    bulkUpload.Blocked,
+		"reason":     bulkUpload.Reason,
 	})
 }
 
