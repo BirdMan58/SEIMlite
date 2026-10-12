@@ -40,7 +40,8 @@ func main() {
 	services := discovery.Discover()
 
 	normalizerRegistry := map[string]func() normalizer.Normalizer{
-		"ssh": func() normalizer.Normalizer { return normalizer.SSHNormalizer{} },
+		"ssh":       func() normalizer.Normalizer { return normalizer.SSHNormalizer{} },
+		"nextcloud": func() normalizer.Normalizer { return normalizer.NextcloudNormalizer{} },
 	}
 
 	for name, running := range services {

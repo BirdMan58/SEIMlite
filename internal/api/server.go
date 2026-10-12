@@ -126,19 +126,27 @@ func (s *Server) Start(addr string) error {
 // ---- Handlers ----
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
-	// Return a list of discovered services with current status
-	// For now, it'll return the known services with static status
-	// In future, it will enhance to include real running status
+	alertCounts := map[string]int{}
+	for _, alert := range s.alerts {
+		if alert == nil {
+			continue
+		}
+		service := alertService(alert)
+		if service == "" {
+			continue
+		}
+		alertCounts[service]++
+	}
+
 	result := []map[string]interface{}{}
 	for _, svc := range s.services {
-		// Simulate running status (it know SSH is running if it are here)
-		running := discovery.IsServiceRunning(svc) // it needs to export this function
+		running := discovery.IsServiceRunning(svc)
 		result = append(result, map[string]interface{}{
 			"id":     svc.Name,
 			"label":  svc.Name,
 			"port":   svc.DefaultPort,
 			"status": map[bool]string{true: "online", false: "offline"}[running],
-			"alerts": 0, // it will count alerts later
+			"alerts": alertCounts[svc.Name],
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -191,13 +199,13 @@ func (s *Server) computeStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_alerts":     total,
-		"active_services":  activeServices,
-		"active_threats":   activeThreats,
-		"events_today":     0,
-		"threat_level":     threatLevel,
-		"blocked_ips":      0,
-		"severity_dist":    severityCount,
+		"total_alerts":    total,
+		"active_services": activeServices,
+		"active_threats":  activeThreats,
+		"events_today":    0,
+		"threat_level":    threatLevel,
+		"blocked_ips":     0,
+		"severity_dist":   severityCount,
 		"security_summary": map[string]interface{}{
 			"active_threats": activeThreats,
 			"status":         map[bool]string{true: "warning", false: "healthy"}[activeThreats > 0],
@@ -220,11 +228,34 @@ func hasThreatAlert(alerts []*models.CorrelationAlert) bool {
 	return false
 }
 
+func alertService(alert *models.CorrelationAlert) string {
+	if alert == nil {
+		return ""
+	}
+
+	text := strings.ToLower(alert.Title + " " + alert.Description)
+	switch {
+	case strings.Contains(text, "ssh"):
+		return "ssh"
+	case strings.Contains(text, "nextcloud"):
+		return "nextcloud"
+	case strings.Contains(text, "vaultwarden"):
+		return "vaultwarden"
+	case strings.Contains(text, "jellyfin"):
+		return "jellyfin"
+	case strings.Contains(text, "pihole"):
+		return "pihole"
+	default:
+		return ""
+	}
+}
+
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	nodes := []map[string]interface{}{
 		{"id": "homelab", "label": "🏠 Homelab", "type": "center"},
 	}
 	links := []map[string]interface{}{}
+	seenServiceNodes := map[string]bool{}
 
 	for _, svc := range s.services {
 		running := discovery.IsServiceRunning(svc)
@@ -240,6 +271,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 			"threat": false,
 		}
 		nodes = append(nodes, serviceNode)
+		seenServiceNodes[svc.Name] = true
 		links = append(links, map[string]interface{}{
 			"source": "homelab",
 			"target": svc.Name,
@@ -247,22 +279,47 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	extIPs := map[string]bool{}
+	threatEdges := map[string]bool{}
 	for _, a := range s.alerts {
-		if a != nil && a.SourceIP != "" && a.Severity >= 2 {
-			extIPs[a.SourceIP] = true
+		if a == nil || a.SourceIP == "" || a.Severity < 2 {
+			continue
 		}
-	}
-	for ip := range extIPs {
+
+		service := alertService(a)
+		if service == "" {
+			service = "homelab"
+		}
+		if !seenServiceNodes[service] && service != "homelab" {
+			seenServiceNodes[service] = true
+			nodes = append(nodes, map[string]interface{}{
+				"id":     service,
+				"label":  service,
+				"type":   "service",
+				"port":   discovery.ServicePort(service),
+				"threat": false,
+			})
+			links = append(links, map[string]interface{}{
+				"source": "homelab",
+				"target": service,
+				"active": true,
+			})
+		}
+
+		ipKey := service + "|" + a.SourceIP
+		if threatEdges[ipKey] {
+			continue
+		}
+		threatEdges[ipKey] = true
+
 		nodes = append(nodes, map[string]interface{}{
-			"id":     ip,
-			"label":  ip,
+			"id":     a.SourceIP,
+			"label":  a.SourceIP,
 			"type":   "external",
 			"threat": true,
 		})
 		links = append(links, map[string]interface{}{
-			"source": "homelab",
-			"target": ip,
+			"source": service,
+			"target": a.SourceIP,
 			"active": true,
 		})
 	}

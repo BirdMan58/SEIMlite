@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -75,24 +76,40 @@ func httpServiceMatches(name, body string, headers http.Header) bool {
 	}
 }
 
+func probeHTTPServiceURL(rawURL, name string) bool {
+	client := &http.Client{
+		Timeout: 800 * time.Millisecond,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false
+	}
+
+	return httpServiceMatches(name, string(bodyBytes), resp.Header)
+}
+
 func detectHTTPService(name string, ports []int) bool {
 	for _, port := range ports {
 		if !isTCPPortOpen(port) {
 			continue
 		}
-		url := fmt.Sprintf("http://127.0.0.1:%d/", port)
-		client := &http.Client{Timeout: 800 * time.Millisecond}
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if err != nil {
-			continue
-		}
-		if httpServiceMatches(name, string(bodyBytes), resp.Header) {
-			return true
+		for _, rawURL := range []string{
+			fmt.Sprintf("http://127.0.0.1:%d/", port),
+			fmt.Sprintf("https://127.0.0.1:%d/", port),
+		} {
+			if probeHTTPServiceURL(rawURL, name) {
+				return true
+			}
 		}
 	}
 	return false
