@@ -1,3 +1,6 @@
 /build/
 /scripts/
 /.github/
+*.db
+*.db-shm
+*.db-wal

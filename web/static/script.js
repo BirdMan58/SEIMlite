@@ -649,23 +649,49 @@ function renderAbuseIPDBStatus() {
     }
 }
 
-function renderAbuseIPDBList(list) {
+// AbuseIPDB pagination state
+const ABUSEIPDB_PAGE_SIZE = 25;
+let abuseipdbCurrentPage = 1;
+let abuseipdbFilteredList = [];
+
+function renderAbuseIPDBList(list, resetPage = false) {
+    if (resetPage) {
+        abuseipdbCurrentPage = 1;
+    }
+    abuseipdbFilteredList = list || [];
+
     const tbody = document.getElementById('abuseipdbTableBody');
     const countEl = document.getElementById('abuseipdb-list-count');
+    const pageInfoEl = document.getElementById('abuseipdbPageInfo');
+    const pageNumberEl = document.getElementById('abuseipdbPageNumber');
+    const prevBtn = document.getElementById('abuseipdbPrevPage');
+    const nextBtn = document.getElementById('abuseipdbNextPage');
 
-    if (countEl) countEl.textContent = `${list.length.toLocaleString()} entries`;
+    const totalCount = abuseipdbFilteredList.length;
+    if (countEl) countEl.textContent = `${totalCount.toLocaleString()} entries`;
 
     if (!tbody) return;
 
-    if (!list || list.length === 0) {
+    if (totalCount === 0) {
         tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">
             No cached IPs yet. Set your API key and click "Update Cache".
         </td></tr>`;
+        if (pageInfoEl) pageInfoEl.textContent = 'Showing 0-0 of 0';
+        if (pageNumberEl) pageNumberEl.textContent = 'Page 1 of 1';
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
         return;
     }
 
-    // Show top 500 with confidence color
-    const rows = list.slice(0, 500).map(ip => {
+    const totalPages = Math.max(1, Math.ceil(totalCount / ABUSEIPDB_PAGE_SIZE));
+    if (abuseipdbCurrentPage > totalPages) abuseipdbCurrentPage = totalPages;
+    if (abuseipdbCurrentPage < 1) abuseipdbCurrentPage = 1;
+
+    const startIdx = (abuseipdbCurrentPage - 1) * ABUSEIPDB_PAGE_SIZE;
+    const endIdx = Math.min(startIdx + ABUSEIPDB_PAGE_SIZE, totalCount);
+    const pageItems = abuseipdbFilteredList.slice(startIdx, endIdx);
+
+    const rows = pageItems.map(ip => {
         const score = ip.abuseConfidenceScore || 0;
         let scoreCls = 'low';
         if (score >= 90) scoreCls = 'critical';
@@ -688,11 +714,16 @@ function renderAbuseIPDBList(list) {
     }).join('');
 
     tbody.innerHTML = rows;
+
+    if (pageInfoEl) pageInfoEl.textContent = `Showing ${startIdx + 1}-${endIdx} of ${totalCount.toLocaleString()}`;
+    if (pageNumberEl) pageNumberEl.textContent = `Page ${abuseipdbCurrentPage} of ${totalPages}`;
+    if (prevBtn) prevBtn.disabled = abuseipdbCurrentPage <= 1;
+    if (nextBtn) nextBtn.disabled = abuseipdbCurrentPage >= totalPages;
 }
 
 function filterAbuseIPDBList(query) {
     if (!query) {
-        renderAbuseIPDBList(abuseipdbList);
+        renderAbuseIPDBList(abuseipdbList, true);
         return;
     }
     const q = query.toLowerCase();
@@ -702,7 +733,7 @@ function filterAbuseIPDBList(query) {
         (ip.isp || '').toLowerCase().includes(q) ||
         (ip.usageType || '').toLowerCase().includes(q)
     );
-    renderAbuseIPDBList(filtered);
+    renderAbuseIPDBList(filtered, true);
 }
 
 // ============================================================
@@ -945,6 +976,28 @@ document.addEventListener('DOMContentLoaded', function() {
         searchInput.addEventListener('input', function() {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => filterAbuseIPDBList(this.value), 300);
+        });
+    }
+
+    // Pagination buttons
+    const prevBtn = document.getElementById('abuseipdbPrevPage');
+    if (prevBtn) {
+        prevBtn.addEventListener('click', function() {
+            if (abuseipdbCurrentPage > 1) {
+                abuseipdbCurrentPage--;
+                renderAbuseIPDBList(abuseipdbFilteredList);
+            }
+        });
+    }
+
+    const nextBtn = document.getElementById('abuseipdbNextPage');
+    if (nextBtn) {
+        nextBtn.addEventListener('click', function() {
+            const totalPages = Math.ceil(abuseipdbFilteredList.length / ABUSEIPDB_PAGE_SIZE);
+            if (abuseipdbCurrentPage < totalPages) {
+                abuseipdbCurrentPage++;
+                renderAbuseIPDBList(abuseipdbFilteredList);
+            }
         });
     }
 });

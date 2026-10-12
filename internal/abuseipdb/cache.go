@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // SQLite driver
 )
+
 
 const (
 	// DefaultDBPath is the default path for the SQLite database file.
@@ -87,24 +89,49 @@ func NewCache(dbPath string) (*Cache, error) {
 		dbPath: dbPath,
 	}
 
-	// Load the last-updated timestamp from the database if available.
+	// Load the last-updated timestamp and cached count from the database.
 	count, updatedAt := c.loadMeta()
 	c.status.TotalCached = count
 	if !updatedAt.IsZero() {
 		c.status.LastUpdated = updatedAt
 	}
 
+	// Priority order for API key:
+	//   1. ABUSEIPDB_KEY environment variable (highest priority)
+	//   2. Key previously saved to the SQLite database
+	apiKey := os.Getenv("ABUSEIPDB_KEY")
+	if apiKey == "" {
+		// Try to load a previously saved key from the DB.
+		apiKey = c.loadKeyFromDB()
+	}
+	if apiKey != "" {
+		c.apiKey = apiKey
+		c.status.APIKeySet = true
+		if os.Getenv("ABUSEIPDB_KEY") != "" {
+			fmt.Println("[AbuseIPDB] API key loaded from ABUSEIPDB_KEY environment variable")
+		} else {
+			fmt.Println("[AbuseIPDB] API key loaded from persistent database")
+		}
+	}
+
 	return c, nil
 }
 
+
 // SetAPIKey configures the AbuseIPDB API key used for fetching the blacklist.
-// Call this before RefreshCache. An empty key means the cache cannot be refreshed.
+// The key is persisted to the SQLite database so it survives restarts.
+// Pass an empty string to clear the key.
 func (c *Cache) SetAPIKey(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.apiKey = key
 	c.status.APIKeySet = key != ""
+	// Persist to DB (best-effort — errors are logged but not returned).
+	if err := c.saveKeyToDB(key); err != nil {
+		fmt.Printf("[AbuseIPDB] WARNING: could not persist API key: %v\n", err)
+	}
 }
+
 
 // GetAPIKey returns the current API key (masked for safety).
 func (c *Cache) GetAPIKey() string {
@@ -274,6 +301,27 @@ func (c *Cache) loadMeta() (count int, updatedAt time.Time) {
 	}
 	return count, updatedAt
 }
+
+// loadKeyFromDB retrieves the API key that was previously saved to the database.
+// Returns an empty string if no key has been saved.
+func (c *Cache) loadKeyFromDB() string {
+	var key string
+	c.db.QueryRow("SELECT value FROM cache_meta WHERE key='api_key'").Scan(&key) //nolint:errcheck
+	return key
+}
+
+// saveKeyToDB persists the API key to the cache_meta table.
+// Pass an empty string to delete the stored key.
+func (c *Cache) saveKeyToDB(key string) error {
+	if key == "" {
+		_, err := c.db.Exec("DELETE FROM cache_meta WHERE key='api_key'")
+		return err
+	}
+	_, err := c.db.Exec(
+		"INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('api_key', ?)", key)
+	return err
+}
+
 
 // persistEntries replaces the entire cached table with fresh data inside a transaction.
 func (c *Cache) persistEntries(entries []BlacklistEntry) error {

@@ -424,7 +424,8 @@ func (s *Server) handleAbuseIPDBList(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]interface{}{})
 		return
 	}
-	ips, err := s.ipdbCache.GetAll(500)
+	limit := 10000
+	ips, err := s.ipdbCache.GetAll(limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
