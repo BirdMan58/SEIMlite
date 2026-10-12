@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"SEIMlite/internal/abuseipdb"
 	"SEIMlite/internal/models"
 )
 
@@ -62,3 +63,13 @@ func (h *Hub) BroadcastAlert(alert *models.CorrelationAlert) {
 	})
 	h.broadcast <- data
 }
+
+// BroadcastIPDBUpdate notifies all clients that the AbuseIPDB cache has been refreshed.
+func (h *Hub) BroadcastIPDBUpdate(status abuseipdb.FetchStatus) {
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":   "abuseipdb_updated",
+		"status": status,
+	})
+	h.broadcast <- data
+}
+

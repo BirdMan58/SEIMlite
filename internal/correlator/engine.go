@@ -5,15 +5,17 @@ import (
 	"sync"
 	"time"
 
+	"SEIMlite/internal/abuseipdb"
 	"SEIMlite/internal/models"
 )
 
 type Engine struct {
-	rules    []Rule
-	contexts map[string]*RuleContext
-	mu       sync.Mutex
-	eventCh  <-chan *models.NormalizedEvent
-	notifier AlertNotifier
+	rules     []Rule
+	contexts  map[string]*RuleContext
+	mu        sync.Mutex
+	eventCh   <-chan *models.NormalizedEvent
+	notifier  AlertNotifier
+	ipdbCache *abuseipdb.Cache // may be nil if API key is not configured
 }
 
 func NewEngine(eventCh <-chan *models.NormalizedEvent, notifier AlertNotifier) *Engine {
@@ -23,6 +25,13 @@ func NewEngine(eventCh <-chan *models.NormalizedEvent, notifier AlertNotifier) *
 		eventCh:  eventCh,
 		notifier: notifier,
 	}
+}
+
+// SetAbuseIPDBCache injects the AbuseIPDB cache so that alerts can be enriched.
+func (e *Engine) SetAbuseIPDBCache(c *abuseipdb.Cache) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ipdbCache = c
 }
 
 // Register adds a rule to the engine.
@@ -58,12 +67,30 @@ func (e *Engine) Start() {
 				continue
 			}
 			if alert != nil {
+				// Enrich alert with AbuseIPDB data if the cache is available.
+				if e.ipdbCache != nil && alert.SourceIP != "" {
+					if blocked, info := e.ipdbCache.IsBlocked(alert.SourceIP); blocked && info != nil {
+						alert.BlockedByAbuseIPDB = true
+						alert.AbuseConfidenceScore = info.AbuseConfidenceScore
+						alert.AbuseCountryCode = info.CountryCode
+						alert.AbuseISP = info.ISP
+						// Escalate severity when the IP is on the AbuseIPDB blacklist.
+						if alert.Severity < 4 {
+							alert.Severity = 4
+						}
+					}
+				}
+
 				// =============================================
 				// THE "BLOCKING" PART FOR TESTING
 				// =============================================
 				fmt.Printf("\n[!!! ALERT !!!] %s\n", alert.Title)
 				fmt.Printf("Description: %s\n", alert.Description)
 				fmt.Printf("Severity: %d/5\n", alert.Severity)
+				if alert.BlockedByAbuseIPDB {
+					fmt.Printf("[ABUSEIPDB] IP %s is on the AbuseIPDB blacklist (confidence: %d%%)\n",
+						alert.SourceIP, alert.AbuseConfidenceScore)
+				}
 				fmt.Printf("[ACTION] Blocking IP %s (SIMULATED - No actual firewall change)\n", alert.SourceIP)
 				fmt.Println("============================================")
 

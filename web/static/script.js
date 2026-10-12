@@ -7,6 +7,10 @@ let timelineAlerts = [];
 let recentAlerts = [];
 let networkData = { nodes: [], links: [] };
 
+// AbuseIPDB state
+let abuseipdbList = [];
+let abuseipdbStatus = {};
+
 // ============================================================
 // 1.  FETCH REAL DATA FROM BACKEND
 // ============================================================
@@ -29,14 +33,21 @@ async function refreshDashboardSnapshot() {
             title: a.title,
             desc: a.description,
             meta: `Source IP: ${a.source_ip}`,
-            action: 'Block'
+            action: 'Block',
+            blockedByAbuseIPDB: a.blocked_by_abuseipdb || false,
+            abuseScore: a.abuse_confidence_score || 0,
+            abuseCountry: a.abuse_country_code || '',
+            abuseISP: a.abuse_isp || '',
         }));
         recentAlerts = alerts.slice(0, 6).map(a => ({
             time: new Date(a.timestamp * 1000).toTimeString().slice(0, 8),
             severity: a.severity >= 4 ? 'critical' : a.severity >= 3 ? 'high' : a.severity >= 2 ? 'medium' : 'low',
             event: a.title,
             source: a.source_ip,
-            intel: `${a.severity}/5 severity`
+            intel: a.blocked_by_abuseipdb
+                ? `⛔ AbuseIPDB ${a.abuse_confidence_score}%`
+                : `${a.severity}/5 severity`,
+            isBlocked: a.blocked_by_abuseipdb || false,
         }));
         networkData = await topologyRes.json();
         const stats = await statsRes.json();
@@ -49,23 +60,28 @@ async function refreshDashboardSnapshot() {
 
 async function fetchInitialData() {
     await refreshDashboardSnapshot();
+    await refreshAbuseIPDBStatus();
+    await refreshAbuseIPDBList();
 }
 
 function updateStats(stats) {
-    const statCards = document.querySelectorAll('.stat-card .value');
-    if (statCards.length >= 5) {
-        statCards[0].textContent = stats.total_alerts || 0;
-        statCards[1].textContent = stats.active_services || 0;
-        statCards[3].textContent = stats.threat_level || 'Unknown';
-        statCards[4].textContent = stats.blocked_ips || 0;
-    }
+    const setEl = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+    };
+    setEl('stat-total-alerts', stats.total_alerts || 0);
+    setEl('stat-active-services', stats.active_services || 0);
+    setEl('stat-events-today', stats.events_today || 0);
+    setEl('stat-threat-level', stats.threat_level || 'Unknown');
+    setEl('stat-blocked-ips', stats.blocked_ips || 0);
 
-    const threatSummary = document.querySelectorAll('.stat-card .change');
-    if (threatSummary.length >= 4) {
-        const activeThreats = stats.active_threats || 0;
-        const threatLabel = activeThreats === 1 ? '1 active threat' : `${activeThreats} active threats`;
-        threatSummary[3].textContent = threatLabel;
-    }
+    const activeThreats = stats.active_threats || 0;
+    setEl('stat-active-threats',
+        activeThreats === 1 ? '1 active threat' : `${activeThreats} active threats`);
+
+    const blockedByIpdb = stats.blocked_by_abuseipdb || 0;
+    setEl('stat-blocked-change',
+        blockedByIpdb > 0 ? `${blockedByIpdb} flagged by AbuseIPDB` : 'cached blacklist');
 }
 
 // ============================================================
@@ -110,16 +126,17 @@ function renderTimeline() {
         low: 'fa-info-circle'
     };
     container.innerHTML = timelineAlerts.map(a => `
-        <div class="timeline-item">
+        <div class="timeline-item${a.blockedByAbuseIPDB ? ' abuseipdb-blocked' : ''}">
             <div class="timeline-time">${a.time}</div>
             <div class="timeline-badge ${a.severity}">
                 <i class="fas ${iconMap[a.severity] || 'fa-bell'}"></i>
             </div>
             <div class="timeline-content">
-                <div class="title">${a.title}</div>
+                <div class="title">${a.title}${a.blockedByAbuseIPDB ? ' <span class="abuseipdb-inline-badge">⛔ AbuseIPDB</span>' : ''}</div>
                 <div class="desc">${a.desc}</div>
                 <div class="meta">
                     <span><i class="fas fa-database"></i> ${a.meta}</span>
+                    ${a.blockedByAbuseIPDB ? `<span><i class="fas fa-shield-virus"></i> Confidence: ${a.abuseScore}% · ${a.abuseCountry}</span>` : ''}
                 </div>
                 <button class="action-btn"><i class="fas fa-shield"></i> ${a.action || 'Block'}</button>
             </div>
@@ -140,12 +157,12 @@ function renderRecentAlerts() {
         return;
     }
     tbody.innerHTML = recentAlerts.map(a => `
-        <tr>
+        <tr class="${a.isBlocked ? 'abuseipdb-row' : ''}">
             <td style="color:var(--text-muted);font-size:12px;">${a.time}</td>
             <td><span class="severity-tag ${a.severity}">${a.severity}</span></td>
             <td>${a.event}</td>
             <td style="font-family:monospace;font-size:13px;">${a.source}</td>
-            <td><span class="threat-intel-badge"><i class="fas fa-shield-halved"></i> ${a.intel}</span></td>
+            <td><span class="threat-intel-badge${a.isBlocked ? ' abuseipdb-intel' : ''}"><i class="fas fa-shield-halved"></i> ${a.intel}</span></td>
         </tr>
     `).join('');
     console.log('[RENDER] Recent alerts rendered with', recentAlerts.length, 'items.');
@@ -550,7 +567,146 @@ function createBar() {
 drawBarChart = createBar;
 
 // ============================================================
-// 4.  THEME SYSTEM
+// 4.  ABUSEIPDB FUNCTIONS
+// ============================================================
+
+async function refreshAbuseIPDBStatus() {
+    try {
+        const res = await fetch('/api/abuseipdb/status');
+        abuseipdbStatus = await res.json();
+        renderAbuseIPDBStatus();
+    } catch (e) {
+        console.error('[AbuseIPDB] Failed to fetch status:', e);
+    }
+}
+
+async function refreshAbuseIPDBList() {
+    try {
+        const res = await fetch('/api/abuseipdb/list');
+        abuseipdbList = await res.json() || [];
+        renderAbuseIPDBList(abuseipdbList);
+    } catch (e) {
+        console.error('[AbuseIPDB] Failed to fetch list:', e);
+    }
+}
+
+function renderAbuseIPDBStatus() {
+    const st = abuseipdbStatus;
+
+    // Key status badge
+    const keyStatusEl = document.getElementById('abuseipdb-key-status');
+    if (keyStatusEl) {
+        if (st.api_key_set) {
+            keyStatusEl.innerHTML = `<span class="severity-tag medium">Set ✓</span>`;
+        } else {
+            keyStatusEl.innerHTML = `<span class="severity-tag low">Not Set</span>`;
+        }
+    }
+
+    // Last updated
+    const lastUpdatedEl = document.getElementById('abuseipdb-last-updated');
+    if (lastUpdatedEl) {
+        if (st.last_updated && st.last_updated !== '0001-01-01T00:00:00Z') {
+            lastUpdatedEl.textContent = new Date(st.last_updated).toLocaleString();
+        } else {
+            lastUpdatedEl.textContent = 'Never';
+        }
+    }
+
+    // Total cached
+    const totalCachedEl = document.getElementById('abuseipdb-total-cached');
+    if (totalCachedEl) totalCachedEl.textContent = (st.total_cached || 0).toLocaleString();
+
+    // Status badge
+    const statusBadge = document.getElementById('abuseipdb-status-badge');
+    if (statusBadge) {
+        if (st.update_in_progress) {
+            statusBadge.innerHTML = `<i class="fas fa-spinner fa-spin" style="color:#ffca28;font-size:8px;"></i> Updating...`;
+        } else if (st.last_error) {
+            statusBadge.innerHTML = `<i class="fas fa-circle" style="color:#f44336;font-size:8px;"></i> Error`;
+        } else if (st.total_cached > 0) {
+            statusBadge.innerHTML = `<i class="fas fa-circle" style="color:#66bb6a;font-size:8px;"></i> ${st.total_cached.toLocaleString()} IPs cached`;
+        } else {
+            statusBadge.innerHTML = `<i class="fas fa-circle" style="color:#5a6f84;font-size:8px;"></i> Empty`;
+        }
+    }
+
+    // Show pre-filled masked key if set
+    const keyInput = document.getElementById('abuseipdbApiKey');
+    if (keyInput && st.api_key_masked && st.api_key_set) {
+        keyInput.placeholder = `Current: ${st.api_key_masked} (type a new key to replace)`;
+    }
+
+    // Error message
+    const errEl = document.getElementById('abuseipdb-error-msg');
+    if (errEl) {
+        if (st.last_error) {
+            errEl.textContent = `⚠ Last error: ${st.last_error}`;
+            errEl.style.display = 'block';
+        } else {
+            errEl.style.display = 'none';
+        }
+    }
+}
+
+function renderAbuseIPDBList(list) {
+    const tbody = document.getElementById('abuseipdbTableBody');
+    const countEl = document.getElementById('abuseipdb-list-count');
+
+    if (countEl) countEl.textContent = `${list.length.toLocaleString()} entries`;
+
+    if (!tbody) return;
+
+    if (!list || list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">
+            No cached IPs yet. Set your API key and click "Update Cache".
+        </td></tr>`;
+        return;
+    }
+
+    // Show top 500 with confidence color
+    const rows = list.slice(0, 500).map(ip => {
+        const score = ip.abuseConfidenceScore || 0;
+        let scoreCls = 'low';
+        if (score >= 90) scoreCls = 'critical';
+        else if (score >= 70) scoreCls = 'high';
+        else if (score >= 50) scoreCls = 'medium';
+
+        const lastReported = ip.lastReportedAt
+            ? new Date(ip.lastReportedAt).toLocaleDateString()
+            : '—';
+
+        return `<tr>
+            <td style="font-family:monospace;font-size:13px;">${ip.ipAddress || ''}</td>
+            <td><span class="severity-tag ${scoreCls}">${score}%</span></td>
+            <td>${ip.countryCode || '—'}</td>
+            <td style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${ip.isp || ''}">${ip.isp || '—'}</td>
+            <td>${ip.totalReports || 0}</td>
+            <td style="font-size:12px;color:var(--text-muted);">${lastReported}</td>
+            <td style="font-size:12px;color:var(--text-muted);">${ip.usageType || '—'}</td>
+        </tr>`;
+    }).join('');
+
+    tbody.innerHTML = rows;
+}
+
+function filterAbuseIPDBList(query) {
+    if (!query) {
+        renderAbuseIPDBList(abuseipdbList);
+        return;
+    }
+    const q = query.toLowerCase();
+    const filtered = abuseipdbList.filter(ip =>
+        (ip.ipAddress || '').toLowerCase().includes(q) ||
+        (ip.countryCode || '').toLowerCase().includes(q) ||
+        (ip.isp || '').toLowerCase().includes(q) ||
+        (ip.usageType || '').toLowerCase().includes(q)
+    );
+    renderAbuseIPDBList(filtered);
+}
+
+// ============================================================
+// 5.  THEME SYSTEM
 // ============================================================
 
 let currentTheme = 'dark'; // 'dark', 'light', 'custom'
@@ -609,15 +765,8 @@ function applyTheme(vars) {
 }
 
 function setDarkTheme() {
-    // Remove any custom theme class and reset to default (dark)
     document.body.classList.remove('light-theme');
-    // Revert to dark by removing inline styles? We'll just set the vars to empty? 
-    // Better: use the dark theme values from :root. We can remove inline overrides.
     const root = document.documentElement.style;
-    // Remove all custom property overrides we might have set
-    // We'll just clear the inline style for each variable we might have set.
-    // Since we apply custom themes by setting inline styles, we can remove them.
-    // But we can't easily remove individual vars, so we'll just set them to '' (empty) which falls back to :root.
     const vars = [
         '--bg-primary', '--bg-secondary', '--bg-panel', '--bg-card', '--bg-input',
         '--text-primary', '--text-secondary', '--text-muted', '--border-color', '--border-light',
@@ -636,7 +785,6 @@ function setDarkTheme() {
     currentTheme = 'dark';
     document.getElementById('themeLabel').textContent = 'Dark';
     document.querySelector('#themeToggle i').className = 'fas fa-moon';
-    // Redraw
     drawNetwork();
     drawPieChart();
     drawBarChart();
@@ -644,23 +792,18 @@ function setDarkTheme() {
 
 function setLightTheme() {
     document.body.classList.add('light-theme');
-    // Also apply the light theme vars (they are defined in CSS via .light-theme)
-    // But to ensure consistency, we also set them inline to override any custom.
     applyTheme(lightThemeVars);
     currentTheme = 'light';
     document.getElementById('themeLabel').textContent = 'Light';
     document.querySelector('#themeToggle i').className = 'fas fa-sun';
-    // Redraw already called in applyTheme
 }
 
 function setCustomTheme(jsonObj) {
-    // jsonObj should be an object with key-value pairs for CSS variables (with or without --)
     const vars = {};
     for (const [key, value] of Object.entries(jsonObj)) {
         const cssKey = key.startsWith('--') ? key : '--' + key;
         vars[cssKey] = value;
     }
-    // Remove light-theme class if present
     document.body.classList.remove('light-theme');
     applyTheme(vars);
     currentTheme = 'custom';
@@ -700,7 +843,114 @@ document.getElementById('customThemeInput').addEventListener('change', function(
 });
 
 // ============================================================
-// 5.  RENDER ALL
+// 6.  ABUSEIPDB UI EVENT HANDLERS
+// ============================================================
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Save API key
+    const saveKeyBtn = document.getElementById('abuseipdbSaveKey');
+    if (saveKeyBtn) {
+        saveKeyBtn.addEventListener('click', async function() {
+            const keyInput = document.getElementById('abuseipdbApiKey');
+            const key = keyInput ? keyInput.value.trim() : '';
+            if (!key) {
+                alert('Please enter your AbuseIPDB API key first.');
+                return;
+            }
+            try {
+                saveKeyBtn.disabled = true;
+                saveKeyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+                const res = await fetch('/api/abuseipdb/setkey', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: key }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    saveKeyBtn.innerHTML = '<i class="fas fa-check"></i> Saved!';
+                    if (keyInput) keyInput.value = '';
+                    await refreshAbuseIPDBStatus();
+                    setTimeout(() => {
+                        saveKeyBtn.innerHTML = '<i class="fas fa-save"></i> Save Key';
+                        saveKeyBtn.disabled = false;
+                    }, 2000);
+                } else {
+                    alert('Failed to save key: ' + (data.error || 'Unknown error'));
+                    saveKeyBtn.innerHTML = '<i class="fas fa-save"></i> Save Key';
+                    saveKeyBtn.disabled = false;
+                }
+            } catch (e) {
+                alert('Error saving key: ' + e.message);
+                saveKeyBtn.innerHTML = '<i class="fas fa-save"></i> Save Key';
+                saveKeyBtn.disabled = false;
+            }
+        });
+    }
+
+    // Toggle key visibility
+    const toggleKeyBtn = document.getElementById('abuseipdbToggleKey');
+    if (toggleKeyBtn) {
+        toggleKeyBtn.addEventListener('click', function() {
+            const keyInput = document.getElementById('abuseipdbApiKey');
+            if (!keyInput) return;
+            if (keyInput.type === 'password') {
+                keyInput.type = 'text';
+                toggleKeyBtn.innerHTML = '<i class="fas fa-eye-slash"></i>';
+            } else {
+                keyInput.type = 'password';
+                toggleKeyBtn.innerHTML = '<i class="fas fa-eye"></i>';
+            }
+        });
+    }
+
+    // Refresh / Update Cache button
+    const refreshBtn = document.getElementById('abuseipdbRefreshBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async function() {
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Fetching...';
+
+            try {
+                const res = await fetch('/api/abuseipdb/refresh', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    // Poll for completion
+                    const pollInterval = setInterval(async () => {
+                        await refreshAbuseIPDBStatus();
+                        if (!abuseipdbStatus.update_in_progress) {
+                            clearInterval(pollInterval);
+                            refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Update Cache';
+                            refreshBtn.disabled = false;
+                            await refreshAbuseIPDBList();
+                            await refreshDashboardSnapshot();
+                        }
+                    }, 3000);
+                } else {
+                    alert('Failed to start refresh: ' + (data.error || res.statusText));
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Update Cache';
+                    refreshBtn.disabled = false;
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Update Cache';
+                refreshBtn.disabled = false;
+            }
+        });
+    }
+
+    // Search filter
+    const searchInput = document.getElementById('abuseipdbSearch');
+    if (searchInput) {
+        let searchTimeout;
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => filterAbuseIPDBList(this.value), 300);
+        });
+    }
+});
+
+// ============================================================
+// 7.  RENDER ALL
 // ============================================================
 
 function renderAll() {
@@ -713,7 +963,7 @@ function renderAll() {
 }
 
 // ============================================================
-// 6.  WEBSOCKET FOR LIVE UPDATES
+// 8.  WEBSOCKET FOR LIVE UPDATES
 // ============================================================
 
 function connectWebSocket() {
@@ -722,17 +972,27 @@ function connectWebSocket() {
         const data = JSON.parse(event.data);
         if (data.type === 'new_alert') {
             refreshDashboardSnapshot();
+        } else if (data.type === 'abuseipdb_updated') {
+            // Cache refresh completed — update UI
+            abuseipdbStatus = Object.assign(abuseipdbStatus, data.status || {});
+            renderAbuseIPDBStatus();
+            refreshAbuseIPDBList();
+            refreshDashboardSnapshot();
+            console.log('[AbuseIPDB] Cache refresh complete via WebSocket notification');
         }
     };
     ws.onerror = function(e) { console.error('WebSocket error:', e); };
     ws.onopen = function() { console.log('WebSocket connected'); };
+    ws.onclose = function() {
+        // Reconnect after 5 seconds
+        setTimeout(connectWebSocket, 5000);
+    };
 }
 
 // ============================================================
-// 7.  INITIALIZATION
+// 9.  INITIALIZATION
 // ============================================================
 
-// Fetch data and render when page loads
 document.addEventListener('DOMContentLoaded', function() {
     fetchInitialData().then(() => {
         connectWebSocket();

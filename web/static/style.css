@@ -882,3 +882,219 @@ body {
     padding-top: 18px;
     transition: color 0.3s, border 0.3s;
 }
+
+/* ========== ABUSEIPDB PANEL ========== */
+
+.abuseipdb-panel {
+    margin-bottom: 24px;
+}
+
+.abuseipdb-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* Config section */
+.abuseipdb-config {
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+    transition: background 0.3s, border 0.3s;
+}
+
+.abuseipdb-config-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.abuseipdb-config-group {
+    flex: 1 1 320px;
+}
+
+.abuseipdb-meta-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 200px;
+}
+
+.abuseipdb-meta-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.abuseipdb-meta-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.abuseipdb-meta-value {
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 13px;
+}
+
+.abuseipdb-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.abuseipdb-label i {
+    color: var(--accent);
+    margin-right: 4px;
+}
+
+.abuseipdb-key-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 6px;
+    font-weight: 400;
+}
+
+.abuseipdb-key-hint a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.abuseipdb-key-hint a:hover {
+    text-decoration: underline;
+}
+
+.abuseipdb-key-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.abuseipdb-key-input {
+    flex: 1 1 240px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: monospace;
+    outline: none;
+    transition: border 0.2s, background 0.3s;
+    min-width: 0;
+}
+
+.abuseipdb-key-input:focus {
+    border-color: var(--accent);
+}
+
+.abuseipdb-key-input::placeholder {
+    color: var(--text-muted);
+    font-family: inherit;
+}
+
+/* Error message */
+.abuseipdb-error {
+    margin-top: 12px;
+    padding: 8px 14px;
+    background: var(--stat-icon-bg-red);
+    color: var(--severity-critical);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+/* Table header / search row */
+.abuseipdb-table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.abuseipdb-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.abuseipdb-section-title i {
+    color: var(--accent);
+}
+
+.abuseipdb-search {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+    width: 240px;
+    transition: border 0.2s, background 0.3s;
+}
+
+.abuseipdb-search:focus {
+    border-color: var(--accent);
+}
+
+.abuseipdb-search::placeholder {
+    color: var(--text-muted);
+}
+
+/* Highlight rows blocked by AbuseIPDB in the alerts timeline */
+.timeline-item.abuseipdb-blocked {
+    border-left: 3px solid var(--severity-critical);
+    padding-left: 8px;
+    background: var(--stat-icon-bg-red);
+    border-radius: 6px;
+}
+
+.abuseipdb-inline-badge {
+    display: inline-block;
+    font-size: 10px;
+    background: var(--stat-icon-bg-red);
+    color: var(--severity-critical);
+    padding: 1px 7px;
+    border-radius: 40px;
+    margin-left: 6px;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+/* Highlight AbuseIPDB rows in the alerts table */
+.alert-table tr.abuseipdb-row td {
+    background: var(--stat-icon-bg-red);
+}
+
+.threat-intel-badge.abuseipdb-intel {
+    background: var(--stat-icon-bg-red);
+    color: var(--severity-critical);
+    font-weight: 600;
+}
+
+@media (max-width: 700px) {
+    .abuseipdb-config-row {
+        flex-direction: column;
+    }
+    .abuseipdb-meta-group {
+        width: 100%;
+    }
+    .abuseipdb-search {
+        width: 100%;
+    }
+}

@@ -65,7 +65,7 @@
                 <div class="stat-icon red"><i class="fas fa-exclamation-triangle"></i></div>
                 <div class="stat-info">
                     <div class="label">Total Alerts</div>
-                    <div class="value">47</div>
+                    <div class="value" id="stat-total-alerts">47</div>
                     <div class="change danger"><i class="fas fa-arrow-up"></i> +12%</div>
                 </div>
             </div>
@@ -73,7 +73,7 @@
                 <div class="stat-icon blue"><i class="fas fa-server"></i></div>
                 <div class="stat-info">
                     <div class="label">Active Services</div>
-                    <div class="value">1</div>
+                    <div class="value" id="stat-active-services">1</div>
                     <div class="change"><i class="fas fa-check-circle"></i> All healthy</div>
                 </div>
             </div>
@@ -81,7 +81,7 @@
                 <div class="stat-icon green"><i class="fas fa-wave-square"></i></div>
                 <div class="stat-info">
                     <div class="label">Events Today</div>
-                    <div class="value">0000</div>
+                    <div class="value" id="stat-events-today">0000</div>
                     <div class="change"><i class="fas fa-arrow-down"></i> -4%</div>
                 </div>
             </div>
@@ -89,16 +89,16 @@
                 <div class="stat-icon orange"><i class="fas fa-globe"></i></div>
                 <div class="stat-info">
                     <div class="label">Threat Level</div>
-                    <div class="value" style="color:var(--severity-high);">Medium</div>
-                    <div class="change">3 active threats</div>
+                    <div class="value" id="stat-threat-level" style="color:var(--severity-high);">Medium</div>
+                    <div class="change" id="stat-active-threats">3 active threats</div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon purple"><i class="fas fa-ban"></i></div>
                 <div class="stat-info">
-                    <div class="label">Blocked IPs</div>
-                    <div class="value">23</div>
-                    <div class="change">+2 this hour</div>
+                    <div class="label">Blocked IPs (AbuseIPDB)</div>
+                    <div class="value" id="stat-blocked-ips">0</div>
+                    <div class="change" id="stat-blocked-change">cached blacklist</div>
                 </div>
             </div>
         </section>
@@ -145,6 +145,98 @@
                     <span class="badge">Last 24h</span>
                 </div>
                 <div id="barChart" class="chart-container"></div>
+            </div>
+        </div>
+
+        <!-- ====== ABUSEIPDB PANEL ====== -->
+        <div class="panel abuseipdb-panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-database"></i> AbuseIPDB Threat Intelligence Cache</h3>
+                <div class="abuseipdb-header-actions">
+                    <span class="badge" id="abuseipdb-status-badge">
+                        <i class="fas fa-circle" style="color:#66bb6a;font-size:8px;"></i> Ready
+                    </span>
+                    <button class="theme-btn" id="abuseipdbRefreshBtn" title="Refresh blocked IP database from AbuseIPDB">
+                        <i class="fas fa-sync-alt"></i> Update Cache
+                    </button>
+                </div>
+            </div>
+
+            <!-- API Key Configuration -->
+            <div class="abuseipdb-config">
+                <div class="abuseipdb-config-row">
+                    <div class="abuseipdb-config-group">
+                        <label class="abuseipdb-label">
+                            <i class="fas fa-key"></i> AbuseIPDB API Key
+                            <span class="abuseipdb-key-hint">(Get your free key at <a href="https://www.abuseipdb.com/api" target="_blank" rel="noopener">abuseipdb.com/api</a>)</span>
+                        </label>
+                        <div class="abuseipdb-key-row">
+                            <input type="password"
+                                   id="abuseipdbApiKey"
+                                   class="abuseipdb-key-input"
+                                   placeholder="Paste your AbuseIPDB API key here..."
+                                   autocomplete="off" />
+                            <button class="theme-btn" id="abuseipdbSaveKey">
+                                <i class="fas fa-save"></i> Save Key
+                            </button>
+                            <button class="theme-btn" id="abuseipdbToggleKey" title="Show/hide key">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="abuseipdb-meta-group">
+                        <div class="abuseipdb-meta-item">
+                            <span class="abuseipdb-meta-label">API Key Status</span>
+                            <span class="abuseipdb-meta-value" id="abuseipdb-key-status">
+                                <span class="severity-tag low">Not Set</span>
+                            </span>
+                        </div>
+                        <div class="abuseipdb-meta-item">
+                            <span class="abuseipdb-meta-label">Last Updated</span>
+                            <span class="abuseipdb-meta-value" id="abuseipdb-last-updated">—</span>
+                        </div>
+                        <div class="abuseipdb-meta-item">
+                            <span class="abuseipdb-meta-label">Cached IPs</span>
+                            <span class="abuseipdb-meta-value" id="abuseipdb-total-cached">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="abuseipdb-error-msg" class="abuseipdb-error" style="display:none;"></div>
+            </div>
+
+            <!-- Blocked IPs Table -->
+            <div class="abuseipdb-table-header">
+                <span class="abuseipdb-section-title">
+                    <i class="fas fa-list-ul"></i> Cached Blocked IPs
+                    <span class="badge" id="abuseipdb-list-count">0 entries</span>
+                </span>
+                <input type="text"
+                       id="abuseipdbSearch"
+                       class="abuseipdb-search"
+                       placeholder="Filter by IP, country, ISP..." />
+            </div>
+
+            <div class="alert-table-wrap">
+                <table class="alert-table">
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Confidence</th>
+                            <th>Country</th>
+                            <th>ISP</th>
+                            <th>Reports</th>
+                            <th>Last Reported</th>
+                            <th>Usage Type</th>
+                        </tr>
+                    </thead>
+                    <tbody id="abuseipdbTableBody">
+                        <tr>
+                            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">
+                                No cached IPs yet. Set your API key and click "Update Cache".
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 

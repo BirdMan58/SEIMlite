@@ -9,26 +9,40 @@ import (
 	"strings"
 	"time"
 
+	"SEIMlite/internal/abuseipdb"
 	"SEIMlite/internal/discovery"
 	"SEIMlite/internal/models"
 	"SEIMlite/web"
 )
 
 type Server struct {
-	hub      *Hub
-	services []discovery.Service
-	alerts   []*models.CorrelationAlert // keep last 50 for initial load
+	hub       *Hub
+	services  []discovery.Service
+	alerts    []*models.CorrelationAlert // keep last 50 for initial load
+	ipdbCache *abuseipdb.Cache
 }
 
 func NewServer(hub *Hub) *Server {
+	// Initialise the AbuseIPDB SQLite cache on startup.
+	cache, err := abuseipdb.NewCache("abuseipdb_cache.db")
+	if err != nil {
+		fmt.Printf("[AbuseIPDB] WARNING: could not open cache: %v\n", err)
+	}
+
 	s := &Server{
-		hub:      hub,
-		services: discovery.KnownServices,
-		alerts:   []*models.CorrelationAlert{},
+		hub:       hub,
+		services:  discovery.KnownServices,
+		alerts:    []*models.CorrelationAlert{},
+		ipdbCache: cache,
 	}
 
 	go hub.Run()
 	return s
+}
+
+// GetIPDBCache returns the AbuseIPDB cache so the correlator can be wired up.
+func (s *Server) GetIPDBCache() *abuseipdb.Cache {
+	return s.ipdbCache
 }
 
 // AddAlert stores an alert (for initial load) and broadcasts it.
@@ -114,6 +128,12 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/api/topology", s.handleTopology)
 	mux.HandleFunc("/api/nextcloud/security", s.handleNextcloudSecurity)
 
+	// AbuseIPDB endpoints
+	mux.HandleFunc("/api/abuseipdb/status", s.handleAbuseIPDBStatus)
+	mux.HandleFunc("/api/abuseipdb/list", s.handleAbuseIPDBList)
+	mux.HandleFunc("/api/abuseipdb/refresh", s.handleAbuseIPDBRefresh)
+	mux.HandleFunc("/api/abuseipdb/setkey", s.handleAbuseIPDBSetKey)
+
 	// WebSocket
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		ServeWs(s.hub, w, r)
@@ -126,19 +146,27 @@ func (s *Server) Start(addr string) error {
 // ---- Handlers ----
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
-	// Return a list of discovered services with current status
-	// For now, it'll return the known services with static status
-	// In future, it will enhance to include real running status
+	alertCounts := map[string]int{}
+	for _, alert := range s.alerts {
+		if alert == nil {
+			continue
+		}
+		service := alertService(alert)
+		if service == "" {
+			continue
+		}
+		alertCounts[service]++
+	}
+
 	result := []map[string]interface{}{}
 	for _, svc := range s.services {
-		// Simulate running status (it know SSH is running if it are here)
-		running := discovery.IsServiceRunning(svc) // it needs to export this function
+		running := discovery.IsServiceRunning(svc)
 		result = append(result, map[string]interface{}{
 			"id":     svc.Name,
 			"label":  svc.Name,
 			"port":   svc.DefaultPort,
 			"status": map[bool]string{true: "online", false: "offline"}[running],
-			"alerts": 0, // it will count alerts later
+			"alerts": alertCounts[svc.Name],
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -154,6 +182,7 @@ func (s *Server) computeStats() map[string]interface{} {
 	total := len(s.alerts)
 	activeServices := 0
 	activeThreats := 0
+	blockedByAbuseIPDB := 0
 	severityCount := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
 
 	for _, svc := range s.services {
@@ -178,6 +207,16 @@ func (s *Server) computeStats() map[string]interface{} {
 		if a.Severity >= 2 {
 			activeThreats++
 		}
+		if a.BlockedByAbuseIPDB {
+			blockedByAbuseIPDB++
+		}
+	}
+
+	// Also count total cached blocked IPs from AbuseIPDB
+	cachedBlockedIPs := 0
+	if s.ipdbCache != nil {
+		st := s.ipdbCache.GetStatus()
+		cachedBlockedIPs = st.TotalCached
 	}
 
 	threatLevel := "Low"
@@ -191,13 +230,14 @@ func (s *Server) computeStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_alerts":     total,
-		"active_services":  activeServices,
-		"active_threats":   activeThreats,
-		"events_today":     0,
-		"threat_level":     threatLevel,
-		"blocked_ips":      0,
-		"severity_dist":    severityCount,
+		"total_alerts":         total,
+		"active_services":      activeServices,
+		"active_threats":       activeThreats,
+		"events_today":         0,
+		"threat_level":         threatLevel,
+		"blocked_ips":          cachedBlockedIPs,
+		"blocked_by_abuseipdb": blockedByAbuseIPDB,
+		"severity_dist":        severityCount,
 		"security_summary": map[string]interface{}{
 			"active_threats": activeThreats,
 			"status":         map[bool]string{true: "warning", false: "healthy"}[activeThreats > 0],
@@ -220,11 +260,34 @@ func hasThreatAlert(alerts []*models.CorrelationAlert) bool {
 	return false
 }
 
+func alertService(alert *models.CorrelationAlert) string {
+	if alert == nil {
+		return ""
+	}
+
+	text := strings.ToLower(alert.Title + " " + alert.Description)
+	switch {
+	case strings.Contains(text, "ssh"):
+		return "ssh"
+	case strings.Contains(text, "nextcloud"):
+		return "nextcloud"
+	case strings.Contains(text, "vaultwarden"):
+		return "vaultwarden"
+	case strings.Contains(text, "jellyfin"):
+		return "jellyfin"
+	case strings.Contains(text, "pihole"):
+		return "pihole"
+	default:
+		return ""
+	}
+}
+
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	nodes := []map[string]interface{}{
 		{"id": "homelab", "label": "🏠 Homelab", "type": "center"},
 	}
 	links := []map[string]interface{}{}
+	seenServiceNodes := map[string]bool{}
 
 	for _, svc := range s.services {
 		running := discovery.IsServiceRunning(svc)
@@ -240,6 +303,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 			"threat": false,
 		}
 		nodes = append(nodes, serviceNode)
+		seenServiceNodes[svc.Name] = true
 		links = append(links, map[string]interface{}{
 			"source": "homelab",
 			"target": svc.Name,
@@ -247,22 +311,48 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	extIPs := map[string]bool{}
+	threatEdges := map[string]bool{}
 	for _, a := range s.alerts {
-		if a != nil && a.SourceIP != "" && a.Severity >= 2 {
-			extIPs[a.SourceIP] = true
+		if a == nil || a.SourceIP == "" || a.Severity < 2 {
+			continue
 		}
-	}
-	for ip := range extIPs {
+
+		service := alertService(a)
+		if service == "" {
+			service = "homelab"
+		}
+		if !seenServiceNodes[service] && service != "homelab" {
+			seenServiceNodes[service] = true
+			nodes = append(nodes, map[string]interface{}{
+				"id":     service,
+				"label":  service,
+				"type":   "service",
+				"port":   discovery.ServicePort(service),
+				"threat": false,
+			})
+			links = append(links, map[string]interface{}{
+				"source": "homelab",
+				"target": service,
+				"active": true,
+			})
+		}
+
+		ipKey := service + "|" + a.SourceIP
+		if threatEdges[ipKey] {
+			continue
+		}
+		threatEdges[ipKey] = true
+
 		nodes = append(nodes, map[string]interface{}{
-			"id":     ip,
-			"label":  ip,
+			"id":     a.SourceIP,
+			"label":  a.SourceIP,
 			"type":   "external",
 			"threat": true,
+			"abuse":  a.AbuseConfidenceScore,
 		})
 		links = append(links, map[string]interface{}{
-			"source": "homelab",
-			"target": ip,
+			"source": service,
+			"target": a.SourceIP,
 			"active": true,
 		})
 	}
@@ -299,6 +389,102 @@ func (s *Server) handleNextcloudSecurity(w http.ResponseWriter, r *http.Request)
 		"findings":   findings,
 		"blocked":    bulkUpload.Blocked,
 		"reason":     bulkUpload.Reason,
+	})
+}
+
+// ---- AbuseIPDB Handlers ----
+
+// handleAbuseIPDBStatus returns the current status of the AbuseIPDB cache.
+func (s *Server) handleAbuseIPDBStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.ipdbCache == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":             "AbuseIPDB cache not available",
+			"api_key_set":       false,
+			"total_cached":      0,
+			"update_in_progress": false,
+		})
+		return
+	}
+	st := s.ipdbCache.GetStatus()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"api_key_set":        st.APIKeySet,
+		"api_key_masked":     s.ipdbCache.GetAPIKey(),
+		"last_updated":       st.LastUpdated,
+		"total_cached":       st.TotalCached,
+		"last_error":         st.LastError,
+		"update_in_progress": st.UpdateInProgress,
+	})
+}
+
+// handleAbuseIPDBList returns paginated blocked IPs from the cache.
+func (s *Server) handleAbuseIPDBList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.ipdbCache == nil {
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+	ips, err := s.ipdbCache.GetAll(500)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ips == nil {
+		ips = []abuseipdb.BlockedIP{}
+	}
+	json.NewEncoder(w).Encode(ips)
+}
+
+// handleAbuseIPDBRefresh triggers an asynchronous refresh of the AbuseIPDB cache.
+func (s *Server) handleAbuseIPDBRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.ipdbCache == nil {
+		http.Error(w, "AbuseIPDB cache not available", http.StatusServiceUnavailable)
+		return
+	}
+	// Run in background so the HTTP response is immediate.
+	go func() {
+		if err := s.ipdbCache.RefreshCache(); err != nil {
+			fmt.Printf("[AbuseIPDB] Refresh error: %v\n", err)
+		} else {
+			// Broadcast a ws event so the dashboard refreshes.
+			s.hub.BroadcastIPDBUpdate(s.ipdbCache.GetStatus())
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "refresh started"})
+}
+
+// handleAbuseIPDBSetKey saves the API key (POST body: {"api_key": "..."}).
+func (s *Server) handleAbuseIPDBSetKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.ipdbCache == nil {
+		http.Error(w, "AbuseIPDB cache not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var body struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	s.ipdbCache.SetAPIKey(strings.TrimSpace(body.APIKey))
+	fmt.Println("[AbuseIPDB] API key updated via dashboard")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":      "ok",
+		"api_key_set": body.APIKey != "",
 	})
 }
 

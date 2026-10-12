@@ -31,6 +31,14 @@ func main() {
 	engine := correlator.NewEngine(eventChan, server)
 	engine.Register(service.SSHBruteforceRule{})    // Alerts on 5 failures
 	engine.Register(service.SSHSingleFailureRule{}) // Alerts on every single failure
+
+	// Wire the AbuseIPDB cache into the correlator for IP enrichment.
+	if cache := server.GetIPDBCache(); cache != nil {
+		engine.SetAbuseIPDBCache(cache)
+		fmt.Println("[  STARTED ] AbuseIPDB IP cache loaded (SQLite)")
+		fmt.Println("[  INFO    ] Set your AbuseIPDB API key via the dashboard to enable cache refresh")
+	}
+
 	go engine.Start()
 
 	// Service Discovery and Normalizers
@@ -40,7 +48,8 @@ func main() {
 	services := discovery.Discover()
 
 	normalizerRegistry := map[string]func() normalizer.Normalizer{
-		"ssh": func() normalizer.Normalizer { return normalizer.SSHNormalizer{} },
+		"ssh":       func() normalizer.Normalizer { return normalizer.SSHNormalizer{} },
+		"nextcloud": func() normalizer.Normalizer { return normalizer.NextcloudNormalizer{} },
 	}
 
 	for name, running := range services {
